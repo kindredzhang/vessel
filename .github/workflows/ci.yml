@@ -1,0 +1,65 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  runtime:
+    name: agent runtime (bun)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: bun run --cwd apps/agent-runtime typecheck
+      - run: bun run --cwd apps/agent-runtime test
+
+  desktop:
+    name: desktop (mygo web + go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/desktop/go.mod
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - run: cd apps/desktop && go build ./...
+      - run: cd apps/desktop && bun run typecheck
+      - run: cd apps/desktop && bun run build:web
+
+  backend:
+    name: backend (go)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: vessel
+          POSTGRES_PASSWORD: vessel
+          POSTGRES_DB: vessel
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U vessel -d vessel"
+          --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgres://vessel:vessel@localhost:5432/vessel?sslmode=disable
+      VESSEL_API_TOKEN: ci-token
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/backend/go.mod
+      - run: cd apps/backend && go vet ./... && go test ./...
+      - run: cd apps/backend && go build -o /tmp/vesseld ./cmd/vesseld
+      - run: cd apps/backend && docker build -t vessel-backend:ci .

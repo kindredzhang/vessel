@@ -1,0 +1,48 @@
+# Development stack. `docker compose up -d db` gives you Postgres;
+# `docker compose --profile app up -d` also runs the backend image.
+#
+# Point DATABASE_URL at an existing Postgres instead and leave this file alone —
+# nothing here is required if you bring your own database.
+
+name: vessel
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vessel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vessel}
+      POSTGRES_DB: ${POSTGRES_DB:-vessel}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    profiles: ["app"]
+    build:
+      context: ./apps/backend
+      args:
+        # Override in .env when proxy.golang.org is unreachable (e.g. goproxy.cn).
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-vessel}:${POSTGRES_PASSWORD:-vessel}@db:5432/${POSTGRES_DB:-vessel}?sslmode=disable
+      VESSEL_LISTEN: ":8080"
+      VESSEL_API_TOKEN: ${VESSEL_API_TOKEN:?set VESSEL_API_TOKEN in .env}
+      VESSEL_CORS_ORIGINS: ${VESSEL_CORS_ORIGINS:-http://localhost:5173,null}
+      VESSEL_AUTO_MIGRATE: "1"
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  db-data:

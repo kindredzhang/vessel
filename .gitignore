@@ -1,0 +1,40 @@
+# dependencies
+node_modules
+
+# output
+out
+dist
+build
+*.tgz
+
+# MyGo development and packaging output
+.mygo
+mygo_windows_*.syso
+
+# agent runtime artifacts
+.vessel
+
+# Go
+bin
+
+# coverage and logs
+coverage
+*.lcov
+logs
+_.log
+report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
+
+# dotenv
+.env
+.env.*.local
+!.env.example
+
+# caches
+.eslintcache
+.cache
+*.tsbuildinfo
+
+# editors
+.idea
+.vscode
+.DS_Store

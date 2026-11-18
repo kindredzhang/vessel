@@ -1,0 +1,31 @@
+{
+  "name": "vessel",
+  "version": "0.1.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "workspaces": [
+    "apps/agent-runtime",
+    "apps/desktop"
+  ],
+  "scripts": {
+    "runtime": "bun --cwd apps/agent-runtime run vessel",
+    "runtime:models": "bun --cwd apps/agent-runtime run models",
+    "runtime:test": "bun --cwd apps/agent-runtime test",
+    "runtime:typecheck": "bun --cwd apps/agent-runtime run typecheck",
+    "desktop:dev": "bun --cwd apps/desktop run dev",
+    "desktop:build": "bun --cwd apps/desktop run build",
+    "desktop:generate": "bun --cwd apps/desktop run generate",
+    "typecheck": "bun run runtime:typecheck && bun --cwd apps/desktop run typecheck",
+    "test": "bun run runtime:test && bun --cwd apps/desktop run test",
+    "db:up": "docker compose up -d db",
+    "db:down": "docker compose down",
+    "db:reset": "docker compose down -v && docker compose up -d db",
+    "backend:dev": "cd apps/backend && go run ./cmd/vesseld",
+    "backend:build": "cd apps/backend && go build ./...",
+    "backend:test": "cd apps/backend && go test ./...",
+    "fmt": "cd apps/backend && gofmt -w ."
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
