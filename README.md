@@ -94,6 +94,10 @@ bun run serve                 # the runtime the UI talks to
 bun run desktop:dev           # then switch routes in the top bar and compare
 ```
 
+[docs/two-routes.html](docs/two-routes.html) walks one turn through both routes
+side by side — each SSE frame next to the snapshot (route A) or the chunks
+(route B) it becomes. Open it in a browser; no server needed.
+
 ## Install the app
 
 **macOS.** Download the `.dmg` from
