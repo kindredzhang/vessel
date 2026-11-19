@@ -21,6 +21,7 @@ type Info struct {
 	Arch       string `json:"arch"`
 	GoVersion  string `json:"goVersion"`
 	APIBaseURL string `json:"apiBaseUrl"`
+	AgentURL   string `json:"agentUrl"`
 }
 
 // Info returns the build and platform details the status bar shows.
@@ -32,6 +33,7 @@ func (Runtime) Info() Info {
 		Arch:       runtime.GOARCH,
 		GoVersion:  runtime.Version(),
 		APIBaseURL: apiBaseURL(),
+		AgentURL:   agentURL(),
 	}
 }
 
@@ -45,6 +47,15 @@ func apiBaseURL() string {
 		return v
 	}
 	return "http://localhost:8080"
+}
+
+// agentURL is where the agent runtime listens. `vessel serve` defaults to 8787;
+// override with VESSEL_RUNTIME_URL when it runs elsewhere.
+func agentURL() string {
+	if v := os.Getenv("VESSEL_RUNTIME_URL"); v != "" {
+		return v
+	}
+	return "http://127.0.0.1:8787"
 }
 
 func main() {

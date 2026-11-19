@@ -41,11 +41,14 @@ bun install
 
 make db                       # Postgres 17 in Docker on :5432
 make backend                  # API on :8080, migrations run at startup
+bun run serve                 # agent runtime on :8787 (HTTP + SSE)
 bun run desktop:dev           # the macOS window, live reload
 ```
 
-The window reports what it can reach: it calls `GET /healthz` on the backend and
-shows honestly that the agent runtime is not attached yet.
+The window is a chat surface: it talks to the agent runtime over HTTP and shows
+the backend separately in its status line. Turns stream token by token, tool
+calls appear as they happen, and in `ask` mode an approval card stops a call
+before it runs.
 
 Run the agent on its own:
 
@@ -143,6 +146,7 @@ bun run runtime:models              # what the endpoint reports
 | `make backend` | run the API with `.env` loaded |
 | `bun run desktop:dev` | MyGo app with Vite live reload |
 | `bun run runtime` | agent runtime CLI |
+| `bun run serve` | agent runtime over HTTP + SSE (`:8787`) |
 | `make test` | Bun tests + `go vet` + Go tests |
 | `make typecheck` | TypeScript projects |
 | `make fmt` | gofmt both Go modules |
@@ -164,8 +168,10 @@ bun run runtime:models              # what the endpoint reports
 
 1. ~~Access modes, model catalog, CLI~~ — done in `apps/agent-runtime`.
 2. ~~Monorepo, backend API, MyGo shell~~ — this scaffold.
-3. Wire runtime ↔ backend: the runtime posts turns, the backend stores them.
-4. Chat surface in the desktop app, plus the four access-mode controls.
+3. ~~Chat surface in the desktop app, with the four access-mode controls~~ —
+   the window streams turns from `bun run serve`.
+4. Persist runtime sessions (they live in memory today) and let the runtime post
+   turns to the backend for history and multi-device access.
 5. Hard bash sandbox (`BashOperations`) so modes are a fence, not a guardrail.
 
 ## Contributing

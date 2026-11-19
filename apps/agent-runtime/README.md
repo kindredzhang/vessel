@@ -48,6 +48,30 @@ The provider is registered as `custom-provider` / “Custom Provider”; each mo
 keeps its own context window, output limit, thinking levels and modalities.
 Tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`.
 
+## Serve it
+
+```bash
+bun run serve                    # http://127.0.0.1:8787
+bun run serve --port 8790 --mode auto
+```
+
+The runtime becomes an HTTP service the desktop app (or anything else) can drive:
+
+| Route | Does |
+| --- | --- |
+| `GET /healthz` | liveness, model, active sessions |
+| `GET/POST /v1/sessions` | list and create sessions |
+| `GET/DELETE /v1/sessions/:id` | read a session with its messages, or drop it |
+| `POST /v1/sessions/:id/turns` | one turn, streamed as SSE (`start`, `text`, `thinking`, `tool`, `approval`, `done`, `error`) |
+| `POST /v1/sessions/:id/approvals` | answer a paused call: `allow`, `always`, `deny`, `auto`, `full` |
+| `POST /v1/sessions/:id/mode` | switch access mode mid-session |
+| `POST /v1/sessions/:id/abort` | stop the running turn |
+
+Sessions live in memory: a restart clears them. The agent is the same one the CLI
+drives, so every access-mode rule applies unchanged — in `ask` mode a mutating
+call pauses until a client answers, and it is denied if nobody does (five minutes
+by default, or immediately when no client is listening).
+
 ## Access modes
 
 Four modes, one gate. A mode decides which tools are declared to the model and

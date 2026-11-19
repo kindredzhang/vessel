@@ -42,8 +42,10 @@ have stable ids and timestamps).
 **`apps/agent-runtime`** — the agent. It builds a Pi SDK session: the model
 catalog comes from one OpenAI-compatible endpoint, tools are the SDK's own
 (`read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`), and one `tool_call`
-extension implements the four access modes. It runs headless (`vessel "prompt"`)
-or as a REPL, and it is usable as a library.
+extension implements the four access modes. It runs headless (`vessel "prompt"`),
+as a REPL, as a library, or as `vessel serve` — an HTTP + SSE service that the
+window drives. The runtime is the only process that talks to the model, so
+credentials and the access gate stay in one place.
 
 ## Why these choices
 
@@ -69,10 +71,13 @@ or as a REPL, and it is usable as a library.
 3. The runtime streams deltas and tool events; the backend appends each finished
    turn to `messages` so a transcript survives restarts.
 4. Approvals for `ask` / `auto` render in the window; the answer goes back to the
-   runtime's gate, never through the database.
+   runtime's gate (`POST /v1/sessions/:id/approvals`), never through the database.
 
-Today step 1 works and step 2 does not exist yet. That gap is the next milestone,
-and it is visible in the UI instead of hidden behind a fake chat box.
+Steps 1–4 work today against the local runtime (`bun run serve`, `:8787`). What is
+still missing is step 3's second half: the runtime does not post finished turns to
+the backend, and its own sessions are in memory, so a runtime restart clears the
+transcript. The window shows the backend and the runtime as two separate,
+truthfully-labelled dependencies instead of one fake "connected" indicator.
 
 ## Honest boundaries
 
@@ -84,6 +89,17 @@ and it is visible in the UI instead of hidden behind a fake chat box.
 - The desktop app talks to `VESSEL_API_URL`, defaulting to `localhost:8080`. A
   remote deployment needs CORS entries (`VESSEL_CORS_ORIGINS`) for the app's
   origin.
+
+## Known limitations
+
+- Runtime sessions are in memory. Restarting `vessel serve` drops them, and the
+  window will say `no session <id>` if you click a stale entry — the honest
+  failure, not a silent one. Persisting them (or forwarding turns to the backend)
+  is the next milestone.
+- The transcript renders model text as pre-wrapped text, not Markdown.
+- Some gateways stream reasoning and then stop without content; the turn is then
+  flagged `silent` and the UI says so. `VESSEL_THINKING=off` avoids the budget
+  being spent entirely on reasoning.
 
 ## Open questions
 

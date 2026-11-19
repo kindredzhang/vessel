@@ -5,12 +5,14 @@
  *   bun run vessel                          interactive
  *   bun run vessel --mode plan "how do I …" plan first
  *   bun run vessel --models                 show the models the endpoint reports
+  bun run serve                           the agent behind an HTTP API
  */
 import { createVesselAgent, type VesselAgent } from "./agent.ts";
 import { createApprover } from "./cli/approval.ts";
 import { createPrompter, type Prompter } from "./cli/prompter.ts";
 import { ACCESS_MODES, MODE_INFO, isAccessMode, type AccessMode } from "./access/modes.ts";
 import { pickModel, providerSettings, type VesselThinkingLevel } from "./models.ts";
+import { serveCommand } from "./serve.ts";
 
 const tty = process.stdout.isTTY === true;
 const paint = (code: string) => (text: string) => (tty ? `\x1b[${code}m${text}\x1b[0m` : text);
@@ -230,6 +232,10 @@ async function repl(agent: VesselAgent, showThinking: boolean, prompter: Prompte
 }
 
 export async function main(argv: string[]): Promise<void> {
+	if (argv[0] === "serve") {
+		await serveCommand(argv.slice(1));
+		return;
+	}
 	const options = parseArgs(argv);
 	if (process.exitCode === 1) return;
 	if (options.help) {

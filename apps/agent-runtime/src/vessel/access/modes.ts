@@ -80,10 +80,12 @@ plan mode.`;
 		case "ask":
 			return `## Access mode: ask before changes
 
-Reading is unrestricted. Every edit, write, or command that changes files needs
-the user's approval first, so explain what you are about to change in one short
-sentence before calling a mutating tool. If approval is denied, do not retry the
-same call — adjust or ask what to do instead.`;
+Reading is unrestricted. Every edit, write, or command that changes files is
+gated: the user sees the exact call and approves or denies it. So say in one
+sentence what you are about to do *and then call the tool in the same turn* —
+never stop to ask for permission in prose, the approval prompt is the question.
+If approval is denied, do not retry the same call — adjust or ask what to do
+instead.`;
 		case "auto":
 			return `## Access mode: autonomous
 

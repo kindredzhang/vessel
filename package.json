@@ -10,6 +10,7 @@
   "scripts": {
     "runtime": "bun --cwd apps/agent-runtime run vessel",
     "runtime:models": "bun --cwd apps/agent-runtime run models",
+    "serve": "bun --cwd apps/agent-runtime run serve",
     "runtime:test": "bun --cwd apps/agent-runtime test",
     "runtime:typecheck": "bun --cwd apps/agent-runtime run typecheck",
     "desktop:dev": "bun --cwd apps/desktop run dev",

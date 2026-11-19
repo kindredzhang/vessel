@@ -12,6 +12,7 @@ export interface Info {
   arch: string;
   goVersion: string;
   apiBaseUrl: string;
+  agentUrl: string;
 }
 
 // ---- Services ----

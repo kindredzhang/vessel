@@ -1,24 +1,25 @@
 {
-  "name": "@vessel/agent-runtime",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "module": "index.ts",
-  "license": "Apache-2.0",
-  "scripts": {
-    "vessel": "bun run index.ts",
-    "models": "bun run index.ts --models",
-    "typecheck": "tsc --noEmit",
-    "test": "bun test"
-  },
-  "dependencies": {
-    "@earendil-works/pi-coding-agent": "^1.5.2"
-  },
-  "devDependencies": {
-    "@types/bun": "latest",
-    "typescript": "^5"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
-  }
+	"name": "@vessel/agent-runtime",
+	"version": "0.1.0",
+	"private": true,
+	"type": "module",
+	"module": "index.ts",
+	"license": "Apache-2.0",
+	"scripts": {
+		"vessel": "bun run index.ts",
+		"models": "bun run index.ts --models",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test",
+		"serve": "bun run index.ts serve"
+	},
+	"dependencies": {
+		"@earendil-works/pi-coding-agent": "^1.5.2"
+	},
+	"devDependencies": {
+		"@types/bun": "latest",
+		"typescript": "^5"
+	},
+	"peerDependencies": {
+		"typescript": "^5"
+	}
 }

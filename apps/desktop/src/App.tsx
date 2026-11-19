@@ -1,178 +1,530 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Runtime, type Info } from "./mygo";
+import {
+  ACCESS_MODES,
+  MODE_INFO,
+  RuntimeClient,
+  type AccessMode,
+  type Decision,
+  type Message,
+  type SessionView,
+  type TurnEvent,
+} from "./api";
 
-type Probe =
-  | { state: "checking" }
-  | { state: "ok"; detail: string }
-  | { state: "warn"; detail: string }
-  | { state: "bad"; detail: string };
+type Status = { state: "checking" } | { state: "ready" } | { state: "offline"; detail: string };
 
-/**
- * The window is a shell for now: it reports what it can reach and says plainly
- * what is not wired yet. The chat surface arrives once the agent runtime speaks
- * to the backend, so none of it is faked here.
- */
+interface ToolRow {
+  key: number;
+  name: string;
+  summary?: string;
+  isError?: boolean;
+}
+
+interface Approval {
+  requestId: string;
+  description: string;
+  toolName: string;
+  risk: string;
+  mode: AccessMode;
+}
+
+const SUGGESTIONS = [
+  "Explain the layout of this repository",
+  "Run the tests and fix whatever breaks",
+  "Add a Makefile target that prints the running containers",
+];
+
 export function App() {
   const [info, setInfo] = useState<Info | null>(null);
-  const [backend, setBackend] = useState<Probe>({ state: "checking" });
+  const [status, setStatus] = useState<Status>({ state: "checking" });
+  const [sessions, setSessions] = useState<SessionView[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [mode, setMode] = useState<AccessMode>("ask");
+  const [model, setModel] = useState<string>("");
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [streamText, setStreamText] = useState("");
+  const [tools, setTools] = useState<ToolRow[]>([]);
+  const [approval, setApproval] = useState<Approval | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const probe = useCallback(async (baseUrl: string) => {
-    setBackend({ state: "checking" });
-    const started = performance.now();
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 3000);
-    try {
-      const res = await fetch(`${baseUrl}/healthz`, { signal: ac.signal });
-      const ms = Math.round(performance.now() - started);
-      if (!res.ok) {
-        setBackend({ state: "bad", detail: `GET /healthz answered ${res.status}` });
-        return;
+  const client = useMemo(() => (info ? new RuntimeClient(info.agentUrl) : null), [info]);
+  const abort = useRef<AbortController | null>(null);
+  const transcript = useRef<HTMLDivElement>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
+  const activeIdRef = useRef<string | null>(null);
+  activeIdRef.current = activeId;
+
+  const connect = useCallback(
+    async (runtime: RuntimeClient) => {
+      setStatus({ state: "checking" });
+      try {
+        await runtime.health();
+        const list = await runtime.listSessions();
+        setSessions(list);
+        setStatus({ state: "ready" });
+      } catch (cause) {
+        setStatus({
+          state: "offline",
+          detail: cause instanceof Error ? cause.message : String(cause),
+        });
       }
-      const body = (await res.json()) as { version?: string };
-      setBackend({
-        state: "ok",
-        detail: `v${body.version ?? "?"} · ${ms}ms · ${baseUrl}`,
-      });
-    } catch {
-      setBackend({
-        state: "bad",
-        detail: `no answer from ${baseUrl} — start it with: make backend`,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
-  }, []);
+    },
+    [],
+  );
 
   useEffect(() => {
     Runtime.info()
       .then((next) => {
         setInfo(next);
-        void probe(next.apiBaseUrl);
+        void connect(new RuntimeClient(next.agentUrl));
       })
-      .catch(() => setBackend({ state: "bad", detail: "Go bindings unavailable" }));
-  }, [probe]);
+      .catch(() => {
+        // Browser-only development (`bun run dev:web`) has no Go side; fall back
+        // to the local runtime so the same page can be worked on in a tab.
+        const fallback: Info = {
+          app: "vessel",
+          version: "web",
+          os: "web",
+          arch: "",
+          goVersion: "",
+          apiBaseUrl: "http://localhost:8080",
+          agentUrl: import.meta.env.VITE_AGENT_URL ?? "http://127.0.0.1:8787",
+        };
+        setInfo(fallback);
+        void connect(new RuntimeClient(fallback.agentUrl));
+      });
+  }, [connect]);
+
+  useEffect(() => {
+    const node = transcript.current;
+    if (node) node.scrollTop = node.scrollHeight;
+  }, [messages, streamText, tools, approval]);
+
+  const open = useCallback(
+    async (id: string) => {
+      if (!client) return;
+      setActiveId(id);
+      setError(null);
+      setStreamText("");
+      setTools([]);
+      setApproval(null);
+      try {
+        const session = await client.getSession(id);
+        setMessages(session.messages);
+        setMode(session.accessMode);
+        setModel(session.model.name);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    },
+    [client],
+  );
+
+  const startSession = useCallback(async (): Promise<SessionView | null> => {
+    if (!client) return null;
+    try {
+      const session = await client.createSession(mode);
+      setSessions((previous) => [session, ...previous]);
+      setActiveId(session.id);
+      setMessages([]);
+      setModel(session.model.name);
+      setError(null);
+      return session;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      return null;
+    }
+  }, [client, mode]);
+
+  const send = useCallback(
+    async (prompt: string) => {
+      const text = prompt.trim();
+      if (!text || !client || busy) return;
+      setError(null);
+      setNotice(null);
+      setDraft("");
+
+      let id = activeIdRef.current;
+      if (!id) {
+        const created = await startSession();
+        if (!created) return;
+        id = created.id;
+      }
+
+      setMessages((previous) => [...previous, { role: "user", text, at: new Date().toISOString() }]);
+      setBusy(true);
+      setStreamText("");
+      setTools([]);
+      let assistant = "";
+      const controller = new AbortController();
+      abort.current = controller;
+
+      try {
+        for await (const event of client.turn(id, text, controller.signal)) {
+          apply(event);
+        }
+      } catch (cause) {
+        if (!controller.signal.aborted) {
+          setError(cause instanceof Error ? cause.message : String(cause));
+        }
+      } finally {
+        abort.current = null;
+        setBusy(false);
+        setStreamText("");
+        setTools([]);
+        setApproval(null);
+      }
+
+      function apply(event: TurnEvent): void {
+        switch (event.type) {
+          case "text":
+            assistant += event.delta;
+            setStreamText(assistant);
+            break;
+          case "thinking":
+            break;
+          case "tool":
+            if (event.phase === "start") {
+              setTools((previous) => [...previous, { key: previous.length, name: event.name, summary: event.summary }]);
+            } else {
+              setTools((previous) => {
+                const next = [...previous];
+                const last = next[next.length - 1];
+                if (last && last.name === event.name) next[next.length - 1] = { ...last, isError: event.isError };
+                return next;
+              });
+            }
+            break;
+          case "approval":
+            setApproval({
+              requestId: event.requestId,
+              description: event.description,
+              toolName: event.toolName,
+              risk: event.risk,
+              mode: event.mode,
+            });
+            break;
+          case "done":
+            setMessages(event.messages);
+            setMode(event.accessMode);
+            setStreamText("");
+            setTools([]);
+            if (event.silent) {
+              setNotice(
+                "The model returned no text — its reasoning may have used the whole budget. Try again, or start the runtime with VESSEL_THINKING=off.",
+              );
+            }
+            break;
+          case "error":
+            setError(event.message);
+            break;
+          case "start":
+            break;
+        }
+      }
+    },
+    [busy, client, startSession],
+  );
+
+  const decide = useCallback(
+    async (decision: Decision) => {
+      if (!client || !activeId || !approval) return;
+      try {
+        await client.decide(activeId, approval.requestId, decision);
+        setApproval(null);
+        if (decision === "auto" || decision === "full") setMode(decision);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    },
+    [activeId, approval, client],
+  );
+
+  const changeMode = useCallback(
+    async (next: AccessMode) => {
+      setMode(next);
+      if (!client || !activeId) return;
+      try {
+        const session = await client.setMode(activeId, next);
+        setMode(session.accessMode);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    },
+    [activeId, client],
+  );
+
+  const stop = useCallback(() => {
+    abort.current?.abort();
+  }, []);
+
+  const remove = useCallback(
+    async (id: string) => {
+      if (!client) return;
+      try {
+        await client.deleteSession(id);
+        setSessions((previous) => previous.filter((session) => session.id !== id));
+        if (activeId === id) {
+          setActiveId(null);
+          setMessages([]);
+        }
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+    },
+    [activeId, client],
+  );
+
+  const offline = status.state === "offline";
+  const lastAssistant = messages.filter((message) => message.role === "assistant").length;
 
   return (
-    <div className="shell">
+    <div className="app">
       <aside className="rail">
-        <h1 className="wordmark">
-          vessel <small>{info ? `v${info.version}` : "…"}</small>
-        </h1>
-        <ul className="nav">
-          <li data-active="true">Overview</li>
-          <li>
-            Sessions <span className="soon">soon</span>
-          </li>
-          <li>
-            Runtime <span className="soon">soon</span>
-          </li>
-          <li>
-            Settings <span className="soon">soon</span>
-          </li>
+        <div className="rail-head">
+          <h1 className="wordmark">
+            vessel <small>{info ? `v${info.version}` : "…"}</small>
+          </h1>
+          <button type="button" className="new-session" onClick={() => void startSession()} disabled={offline}>
+            <span aria-hidden>+</span> New session
+          </button>
+        </div>
+
+        <ul className="threads">
+          {sessions.length === 0 && <li className="threads-empty">No sessions yet</li>}
+          {sessions.map((session) => (
+            <li key={session.id}>
+              <button
+                type="button"
+                data-active={session.id === activeId}
+                onClick={() => void open(session.id)}
+              >
+                <span className="thread-title">
+                  {session.messages.find((message) => message.role === "user")?.text.slice(0, 42) ??
+                    "New session"}
+                </span>
+                <span className="thread-meta">
+                  {MODE_INFO[session.accessMode].label} · {time(session.createdAt)}
+                </span>
+              </button>
+              <button
+                type="button"
+                className="thread-remove"
+                aria-label="Delete session"
+                onClick={() => void remove(session.id)}
+              >
+                ×
+              </button>
+            </li>
+          ))}
         </ul>
+
         <div className="rail-foot">
-          <span>{info ? `${info.os}/${info.arch}` : "detecting platform"}</span>
-          <span>{info?.goVersion ?? ""}</span>
-          <span>{info?.apiBaseUrl ?? ""}</span>
+          <span className="state" data-state={status.state}>
+            <span className="dot" />
+            {status.state === "ready" ? "runtime ready" : status.state === "checking" ? "connecting…" : "runtime offline"}
+          </span>
+          <span className="endpoint">{info?.agentUrl ?? "…"}</span>
         </div>
       </aside>
 
       <main className="main">
-        <div className="main-inner">
-          <p className="eyebrow">Monorepo scaffold · macOS &amp; iOS</p>
-          <h1>Your agent, in one window.</h1>
-          <p className="lede">
-            Vessel is an open-source coding agent: a Go backend, a TypeScript agent
-            runtime, and this MyGo shell that runs on macOS and iOS from one codebase.
-          </p>
-
-          <section>
-            <div className="section-head">
-              <h2>Connectivity</h2>
+        <header className="topbar">
+          <div className="topbar-model">
+            {model ? `${model}` : "no model loaded"}
+            <span className="topbar-cwd">
+              {info ? (info.arch ? `${info.os}/${info.arch}` : info.os) : ""}
+            </span>
+          </div>
+          <div className="modes" role="group" aria-label="File access mode">
+            {ACCESS_MODES.map((candidate) => (
               <button
+                key={candidate}
                 type="button"
-                onClick={() => info && void probe(info.apiBaseUrl)}
-                disabled={!info}
+                data-active={candidate === mode}
+                title={MODE_INFO[candidate].hint}
+                onClick={() => void changeMode(candidate)}
+                disabled={busy}
               >
-                Re-check
+                {MODE_INFO[candidate].label}
+              </button>
+            ))}
+          </div>
+        </header>
+
+        <div className="transcript" ref={transcript}>
+          {error && (
+            <div className="error" role="alert">
+              <strong>Something went wrong</strong>
+              <span>{error}</span>
+              <button type="button" className="ghost" onClick={() => setError(null)}>
+                Dismiss
               </button>
             </div>
-            <dl className="rows">
-              <div className="row">
-                <dt>Backend</dt>
-                <dd>
-                  Go · chi · pgx · Postgres
-                  <div className="detail">
-                    {backend.state === "checking" ? "asking /healthz…" : backend.detail}
-                  </div>
-                </dd>
-                <Pill state={backend.state} />
-              </div>
-              <div className="row">
-                <dt>Agent runtime</dt>
-                <dd>
-                  TypeScript · Pi coding agent SDK
-                  <div className="detail">
-                    apps/agent-runtime — runs on its own; not connected to this window yet
-                  </div>
-                </dd>
-                <span className="pill" data-state="idle">
-                  not wired
-                </span>
-              </div>
-              <div className="row">
-                <dt>This window</dt>
-                <dd>
-                  Go shell · React page · WebKit on macOS and iOS
-                  <div className="detail">
-                    {info ? `mygo · ${info.os}/${info.arch}` : "loading Go bindings…"}
-                  </div>
-                </dd>
-                <span className="pill" data-state="ok">
-                  <span className="dot" />
-                  running
-                </span>
-              </div>
-            </dl>
-          </section>
-
-          <section>
-            <div className="section-head">
-              <h2>What this build is</h2>
-            </div>
-            <div className="note">
-              <p>
-                <strong>Three projects, one repo.</strong> The backend owns persistence
-                and the HTTP API; the agent runtime owns the session, tools and access
-                modes; this app owns the interface.
+          )}
+          {notice && (
+            <p className="notice">
+              {notice}
+              <button type="button" className="link" onClick={() => setNotice(null)}>
+                dismiss
+              </button>
+            </p>
+          )}
+          {offline ? (
+            <div className="placeholder">
+              <h2>The agent runtime isn’t answering.</h2>
+              <p className="lede">
+                Vessel talks to the agent over HTTP. Start it in the repo root, then reconnect.
               </p>
-              <p>
-                Nothing pretends to work: the agent is not attached to the backend yet, so
-                this window only reports the state of the pieces you can start.
-              </p>
-              <p className="mono">make db · make backend · bun run desktop:dev</p>
+              <pre className="command">bun run serve</pre>
+              <p className="detail">{status.detail}</p>
+              <button type="button" onClick={() => client && void connect(client)}>
+                Try again
+              </button>
             </div>
-          </section>
+          ) : messages.length === 0 && !busy ? (
+            <div className="placeholder">
+              <p className="eyebrow">Pi coding agent SDK · {MODE_INFO[mode].label} mode</p>
+              <h2>Ask it to do something.</h2>
+              <p className="lede">
+                It reads, runs commands and edits files in this repository. In {MODE_INFO[mode].label.toLowerCase()} mode,{" "}
+                {MODE_INFO[mode].hint}.
+              </p>
+              <div className="suggestions">
+                {SUGGESTIONS.map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    type="button"
+                    onClick={() => {
+                      setDraft(suggestion);
+                      composer.current?.focus();
+                    }}
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="column">
+              {messages.map((message, index) => (
+                <article key={`${message.at}-${index}`} className="turn" data-role={message.role}>
+                  <span className="turn-label">{message.role === "user" ? "you" : "vessel"}</span>
+                  <div className="turn-body">{message.text}</div>
+                </article>
+              ))}
 
-          <div className="foot">
-            <span>Apache-2.0</span>
-            <span>docs/architecture.md</span>
-            <span>localhost only by default</span>
-          </div>
+              {(busy || streamText || tools.length > 0) && (
+                <article className="turn" data-role="assistant">
+                  <span className="turn-label">vessel</span>
+                  <div className="turn-body">
+                    {tools.map((tool) => (
+                      <div key={tool.key} className="tool" data-error={tool.isError === true}>
+                        <span className="tool-mark">{tool.isError ? "✗" : "⏺"}</span>
+                        <span className="tool-name">{tool.name}</span>
+                        {tool.summary && <span className="tool-args">{tool.summary}</span>}
+                      </div>
+                    ))}
+                    {streamText && <div className="stream">{streamText}</div>}
+                    {busy && !streamText && tools.length === 0 && (
+                      <div className="working">
+                        <span />
+                        <span />
+                        <span />
+                      </div>
+                    )}
+                  </div>
+                </article>
+              )}
+
+              {approval && (
+                <div className="approval" data-risk={approval.risk}>
+                  <div className="approval-head">
+                    <span className="approval-mark">⚠</span>
+                    <div>
+                      <strong>Approval needed</strong>
+                      <span className="approval-meta">
+                        {approval.toolName} · risk {approval.risk} · {MODE_INFO[approval.mode].label} mode
+                      </span>
+                    </div>
+                  </div>
+                  <pre className="approval-call">{approval.description}</pre>
+                  <div className="approval-actions">
+                    <button type="button" className="primary" onClick={() => void decide("allow")}>
+                      Allow once
+                    </button>
+                    <button type="button" onClick={() => void decide("always")}>
+                      Always this session
+                    </button>
+                    <button type="button" onClick={() => void decide("deny")}>
+                      Deny
+                    </button>
+                    <button type="button" className="ghost" onClick={() => void decide("auto")}>
+                      Switch to Auto
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {error && (
+                <div className="error">
+                  <strong>Turn failed</strong>
+                  <span>{error}</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
+
+        <form
+          className="composer"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void send(draft);
+          }}
+        >
+          <textarea
+            ref={composer}
+            value={draft}
+            rows={1}
+            placeholder={offline ? "runtime offline — start it with bun run serve" : "Ask, or tell it what to change…"}
+            disabled={offline}
+            onChange={(event) => setDraft(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                void send(draft);
+              }
+            }}
+          />
+          {busy ? (
+            <button type="button" className="send stop" onClick={stop} title="Stop the turn">
+              Stop
+            </button>
+          ) : (
+            <button type="submit" className="send" disabled={!draft.trim() || offline}>
+              Send
+            </button>
+          )}
+        </form>
+
+        <footer className="statusline">
+          <span>{lastAssistant} replies</span>
+          <span>{MODE_INFO[mode].hint}</span>
+          <span>read · bash · edit · write · grep · find · ls</span>
+        </footer>
       </main>
     </div>
   );
 }
 
-function Pill({ state }: { state: Probe["state"] }) {
-  const label =
-    state === "ok" ? "reachable" : state === "bad" ? "unreachable" : "checking";
-  return (
-    <span className="pill" data-state={state}>
-      <span className="dot" />
-      {label}
-    </span>
-  );
+function time(iso: string): string {
+  const date = new Date(iso);
+  return Number.isNaN(date.valueOf())
+    ? ""
+    : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
