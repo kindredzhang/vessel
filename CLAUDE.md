@@ -116,7 +116,11 @@ An open-source coding agent in three projects. Read these before changing them:
 | `apps/desktop` | Go 1.27 + MyGo + React/Vite | the window; builds macOS and iOS from one module |
 
 - Run: `make help` for every target. Typical loop: `make db`, `make backend`,
-  `bun run desktop:dev`, `bun run runtime`.
+  `bun run serve`, `bun run desktop:dev`, `bun run runtime`.
+- Dev and test models: use the `qingtian/*` models on the local gateway.
+  `qingtian/dbtrt8tvcln3cqaun05g` (`deepseek-v4.1-flash-1017`) at
+  `VESSEL_THINKING=xhigh` is the current recommendation; other models have
+  streamed reasoning and then stopped without text.
 - Checks: `make test`, `make typecheck`, `make fmt`.
 - Layout rules: the backend never runs agent tools; the runtime never touches
   Postgres; the desktop app only talks HTTP. Keep those seams.

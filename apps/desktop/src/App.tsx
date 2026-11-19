@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
 
 import { Runtime, type Info } from "./mygo";
 import {
@@ -174,8 +174,6 @@ export function App() {
       } finally {
         abort.current = null;
         setBusy(false);
-        setStreamText("");
-        setTools([]);
         setApproval(null);
       }
 
@@ -212,11 +210,14 @@ export function App() {
             setMessages(event.messages);
             setMode(event.accessMode);
             setStreamText("");
-            setTools([]);
+            // Tool rows stay on screen until the next turn: a turn can end with
+            // tool calls and no prose, and clearing them would leave a blank page.
             if (event.silent) {
               setNotice(
                 "The model returned no text — its reasoning may have used the whole budget. Try again, or start the runtime with VESSEL_THINKING=off.",
               );
+            } else if (event.messages.at(-1)?.role !== "assistant") {
+              setNotice("The turn ended without a reply. The tool calls above are what it did.");
             }
             break;
           case "error":
@@ -366,14 +367,6 @@ export function App() {
               </button>
             </div>
           )}
-          {notice && (
-            <p className="notice">
-              {notice}
-              <button type="button" className="link" onClick={() => setNotice(null)}>
-                dismiss
-              </button>
-            </p>
-          )}
           {offline ? (
             <div className="placeholder">
               <h2>The agent runtime isn’t answering.</h2>
@@ -411,26 +404,28 @@ export function App() {
             </div>
           ) : (
             <div className="column">
-              {messages.map((message, index) => (
-                <article key={`${message.at}-${index}`} className="turn" data-role={message.role}>
-                  <span className="turn-label">{message.role === "user" ? "you" : "vessel"}</span>
-                  <div className="turn-body">{message.text}</div>
-                </article>
-              ))}
+              {messages.map((message, index) => {
+                // The tool rows of the turn that just finished belong to its reply,
+                // not to a second assistant bubble below it.
+                const withTools = message.role === "assistant" && index === messages.length - 1;
+                return (
+                  <article key={`${message.at}-${index}`} className="turn" data-role={message.role}>
+                    <span className="turn-label">{message.role === "user" ? "you" : "vessel"}</span>
+                    <div className="turn-body">
+                      {withTools && <ToolRows tools={tools} />}
+                      {message.text}
+                    </div>
+                  </article>
+                );
+              })}
 
-              {(busy || streamText || tools.length > 0) && (
+              {busy && (
                 <article className="turn" data-role="assistant">
                   <span className="turn-label">vessel</span>
                   <div className="turn-body">
-                    {tools.map((tool) => (
-                      <div key={tool.key} className="tool" data-error={tool.isError === true}>
-                        <span className="tool-mark">{tool.isError ? "✗" : "⏺"}</span>
-                        <span className="tool-name">{tool.name}</span>
-                        {tool.summary && <span className="tool-args">{tool.summary}</span>}
-                      </div>
-                    ))}
+                    <ToolRows tools={tools} />
                     {streamText && <div className="stream">{streamText}</div>}
-                    {busy && !streamText && tools.length === 0 && (
+                    {!streamText && tools.length === 0 && (
                       <div className="working">
                         <span />
                         <span />
@@ -439,6 +434,15 @@ export function App() {
                     )}
                   </div>
                 </article>
+              )}
+
+              {notice && (
+                <p className="notice">
+                  {notice}
+                  <button type="button" className="link" onClick={() => setNotice(null)}>
+                    dismiss
+                  </button>
+                </p>
               )}
 
               {approval && (
@@ -520,6 +524,20 @@ export function App() {
       </main>
     </div>
   );
+}
+
+function ToolRows({ tools }: { tools: ToolRow[] }): ReactElement {
+	return (
+		<>
+			{tools.map((tool) => (
+				<div key={tool.key} className="tool" data-error={tool.isError === true}>
+					<span className="tool-mark">{tool.isError ? "✗" : "⏺"}</span>
+					<span className="tool-name">{tool.name}</span>
+					{tool.summary && <span className="tool-args">{tool.summary}</span>}
+				</div>
+			))}
+		</>
+	);
 }
 
 function time(iso: string): string {

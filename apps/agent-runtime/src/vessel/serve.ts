@@ -103,6 +103,9 @@ export async function serveCommand(argv: string[]): Promise<void> {
 	const shutdown = (): void => {
 		service.close();
 		void server.stop();
+		// Open SSE streams keep the loop alive; exit once they are cut, otherwise
+		// a killed `serve` lingers as a zombie holding sessions nobody can reach.
+		setTimeout(() => process.exit(0), 300);
 	};
 	process.on("SIGINT", shutdown);
 	process.on("SIGTERM", shutdown);

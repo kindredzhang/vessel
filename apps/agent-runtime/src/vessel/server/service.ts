@@ -127,7 +127,12 @@ export function createVesselService(options: VesselServiceOptions): VesselServic
 	const json = (request: Request, status: number, payload: unknown): Response =>
 		new Response(JSON.stringify(payload), {
 			status,
-			headers: headersFor(request, { "content-type": "application/json; charset=utf-8" }),
+			headers: headersFor(request, {
+				"content-type": "application/json; charset=utf-8",
+				// Sessions are in memory and change on every turn; a cached GET is
+				// always a lie (it shows sessions that no longer exist).
+				"cache-control": "no-store",
+			}),
 		});
 
 	const authorized = (request: Request): boolean => {
