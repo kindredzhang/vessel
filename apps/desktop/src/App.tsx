@@ -1,5 +1,5 @@
-import { Plus, Trash2, Cpu, Radio, Waypoints } from "lucide-react";
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Plus, Trash2, Cpu, Radio } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
 	ACCESS_MODES,
@@ -12,28 +12,9 @@ import {
 	RuntimeClient,
 } from "./api";
 import { TurnChannel, messageOf, type ApprovalRequest } from "./chat/channel";
-import { LocalChatProvider } from "./chat/localRuntime";
 import { VesselThread } from "./chat/Thread";
+import { WireChatProvider } from "./chat/wireRuntime";
 import { Runtime, type Info } from "./mygo";
-
-type RuntimeKind = "adapter" | "wire";
-
-// Route B drags the whole AI SDK in with it; keeping it off the first paint
-// makes the cost of each route visible in the bundle as well as the code.
-const WireChatProvider = lazy(async () => {
-	const module = await import("./chat/wireRuntime");
-	return { default: module.WireChatProvider };
-});
-
-const RUNTIME_LABEL: Record<RuntimeKind, string> = {
-	adapter: "assistant-ui adapter",
-	wire: "AI SDK transport",
-};
-
-const RUNTIME_HINT: Record<RuntimeKind, string> = {
-	adapter: "useLocalRuntime + ChatModelAdapter — our SSE, their runtime",
-	wire: "useChatRuntime + ChatTransport — AI SDK owns the chat",
-};
 
 export function App() {
 	const [info, setInfo] = useState<Info | null>(null);
@@ -47,7 +28,6 @@ export function App() {
 	const [mode, setMode] = useState<AccessMode>("ask");
 	const [approval, setApproval] = useState<ApprovalRequest | null>(null);
 	const [notice, setNotice] = useState<string | null>(null);
-	const [kind, setKind] = useState<RuntimeKind>(() => readKind());
 
 	const modeRef = useRef<AccessMode>("ask");
 	modeRef.current = mode;
@@ -214,23 +194,16 @@ export function App() {
 
 	const chat = useMemo(() => {
 		if (!channel) return null;
-		const surface = (
-			<VesselThread footer={<ApprovalCard request={approval} onDecide={decide} />} />
+		// One route: the AI SDK transport assembles the messages, assistant-ui
+		// renders them. Remounting on the token reseeds the thread with history.
+		return (
+			<div key={mountToken}>
+				<WireChatProvider channel={channel} history={history}>
+					<VesselThread footer={<ApprovalCard request={approval} onDecide={decide} />} />
+				</WireChatProvider>
+			</div>
 		);
-		const provider =
-			kind === "adapter" ? (
-				<LocalChatProvider channel={channel} history={history}>
-					{surface}
-				</LocalChatProvider>
-			) : (
-				<Suspense fallback={<p className="label p-7">loading the AI SDK transport…</p>}>
-					<WireChatProvider channel={channel} history={history}>
-						{surface}
-					</WireChatProvider>
-				</Suspense>
-			);
-		return <div key={`${mountToken}:${kind}`}>{provider}</div>;
-	}, [approval, channel, decide, history, kind, mountToken]);
+	}, [approval, channel, decide, history, mountToken]);
 
 	const model = active ? sessions.find((item) => item.id === active)?.model : sessions[0]?.model;
 
@@ -303,7 +276,7 @@ export function App() {
 			</aside>
 
 			<main className="flex min-h-0 min-w-0 flex-1 flex-col">
-				<TopBar mode={mode} onMode={changeMode} kind={kind} onKind={setKind} />
+				<TopBar mode={mode} onMode={changeMode} />
 
 				{notice ? (
 					<div className="flex items-start justify-between gap-4 border-b border-warn/30 bg-warn-soft px-7 py-2.5">
@@ -320,12 +293,7 @@ export function App() {
 	);
 }
 
-function TopBar(props: {
-	mode: AccessMode;
-	onMode: (mode: AccessMode) => void;
-	kind: RuntimeKind;
-	onKind: (kind: RuntimeKind) => void;
-}) {
+function TopBar(props: { mode: AccessMode; onMode: (mode: AccessMode) => void }) {
 	return (
 		<header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-line px-7 py-3">
 			<div className="flex items-center gap-1 rounded-md border border-line bg-raised p-0.5">
@@ -344,24 +312,7 @@ function TopBar(props: {
 				))}
 			</div>
 
-			<div className="flex items-center gap-1 rounded-md border border-line bg-raised p-0.5" title={RUNTIME_HINT[props.kind]}>
-				<Waypoints className="mx-1.5 size-3 text-muted" />
-				{(Object.keys(RUNTIME_LABEL) as RuntimeKind[]).map((kind) => (
-					<button
-						key={kind}
-						type="button"
-						onClick={() => {
-							writeKind(kind);
-							props.onKind(kind);
-						}}
-						className={`rounded px-2.5 py-1 text-[12px] transition ${
-							kind === props.kind ? "bg-ink text-paper" : "text-ink-soft hover:text-ink"
-						}`}
-					>
-						{RUNTIME_LABEL[kind]}
-					</button>
-				))}
-			</div>
+			<span className="label">ai sdk transport</span>
 		</header>
 	);
 }
@@ -407,17 +358,6 @@ function clockOf(iso: string): string {
 	const date = new Date(iso);
 	if (Number.isNaN(date.getTime())) return "—";
 	return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-}
-
-const KIND_KEY = "vessel.runtime-kind";
-
-function readKind(): RuntimeKind {
-	const stored = typeof localStorage === "undefined" ? null : localStorage.getItem(KIND_KEY);
-	return stored === "wire" ? "wire" : "adapter";
-}
-
-function writeKind(kind: RuntimeKind): void {
-	if (typeof localStorage !== "undefined") localStorage.setItem(KIND_KEY, kind);
 }
 
 export { ApiError };

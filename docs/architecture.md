@@ -48,28 +48,35 @@ as a REPL, as a library, or as `vessel serve` — an HTTP + SSE service that the
 window drives. The runtime is the only process that talks to the model, so
 credentials and the access gate stay in one place.
 
-### Two routes into the same thread
+### One route: the AI SDK transport
 
-The chat surface can drive the runtime two ways, switchable at runtime, because
-the choice is a real trade-off and not a settled one:
+The surface used to carry two interchangeable routes so the trade-off could be
+felt rather than argued (see `docs/two-routes.html`, kept as the record). It is
+now one:
 
-- **assistant-ui adapter** — `useLocalRuntime` with a `ChatModelAdapter`. The
-  adapter owns the message list and yields a fresh part snapshot per SSE event,
-  so tool calls, reasoning and text are ordinary assistant-ui parts. Approval
-  requests travel out of band through a small `TurnChannel` object that the
-  adapter also feeds (`approval`, `settled`, `failed`). Least machinery; the
-  message model is assistant-ui's.
-- **AI SDK transport** — `useChatRuntime` with a `ChatTransport` that maps our
-  SSE frames onto `UIMessageChunk`s (`text-start`/`text-delta`/`reasoning-*`/
-  `tool-input-available`/`tool-output-available`). The AI SDK assembles and
-  owns the messages, which is where its ecosystem (persistence adapters,
-  telemetry, resumable streams) plugs in. Costs one dependency and a second
-  message model; it is lazily imported so route A never downloads it.
+- **`useChatRuntime` + `ChatTransport`** — our SSE frames are mapped onto
+  `UIMessageChunk`s (`text-start`/`text-delta`/`reasoning-*`/`tool-input-*`/
+  `tool-output-*`/`finish`) and the AI SDK assembles the messages. Everything
+  past that translation uses the AI SDK's model, which is where persistence
+  adapters, telemetry and resumption plug in — the shape the next milestone
+  (sessions in Postgres, several devices) actually needs.
+- The **`ChatModelAdapter` route** (a generator yielding full snapshots into
+  `useLocalRuntime`) was deleted. It was less code and replayed trivially, but
+  it owned a second message model and could not use any of the above.
 
-Neither route knows about access modes: the runtime decides whether a tool call
-needs approval and emits an `approval` frame; the UI renders it, the answer goes
-back to `POST /v1/sessions/:id/approvals`. Keep that seam — anything that makes
-one route smarter than the other means the runtime is leaking UI policy.
+What did **not** move into the AI SDK is the wire: `text`, `thinking`, `tool`,
+`approval`, `done` are our frames, defined in the runtime. That is the seam to
+protect — the runtime must not learn which frontend consumes it, and the
+frontend must not invent frames the runtime cannot emit.
+
+Approval is the interesting case, because it is in neither protocol: it is not
+a model output, so it is not a chunk and not a part. It goes out as an `approval`
+frame, into a `TurnChannel` signal, and back as
+`POST /v1/sessions/:id/approvals`. Anything that tries to model approval as a
+message part will be modelling a decision as content, and will tangle itself.
+
+Access modes stay entirely in the runtime: it decides whether a tool call needs
+approval and emits the frame. The UI only renders and answers.
 
 ## Why these choices
 
@@ -135,9 +142,6 @@ truthfully-labelled dependencies instead of one fake "connected" indicator.
   transcripts or repositories leave the machine.
 - Do sessions belong to a workspace path? Today `sessions` has no project or
   repository column; the UI will need one.
-- Which route wins? Both are maintained for now so the difference is felt before
-  it is decided — the adapter route is less code, the transport route buys the
-  AI SDK's message pipeline.
 - Model catalog: the runtime discovers models from the endpoint per process. If
   the backend should show them, it needs either a cached catalog table or a
   proxy endpoint.

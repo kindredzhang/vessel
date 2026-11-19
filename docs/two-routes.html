@@ -328,6 +328,7 @@
 <body>
 <div class="wrap">
 	<nav>
+		<a href="#decision">00 决定</a>
 		<a href="#concepts">01 概念</a>
 		<a href="#stream">02 同一股流</a>
 		<a href="#stage">03 逐步对照</a>
@@ -343,6 +344,16 @@
 			而是把这同一股流翻译成两种内部表示。下面把一次真实回合拆成 12 步，逐帧看两边各自多出了什么。
 		</p>
 	</header>
+
+	<section id="decision" style="padding-top:32px">
+		<div style="border:1px solid var(--accent);border-left-width:3px;border-radius:10px;background:var(--raised);padding:16px 20px">
+			<span class="label" style="color:var(--accent)">决定 · 2026-11-19</span>
+			<p style="margin:6px 0 0;font-family:var(--serif);font-size:16px;color:var(--ink)">
+				只保留<b>路线 B · AI SDK transport</b>。路线 A 的代码（<code>chat/localRuntime.tsx</code>）已删除；
+				这一页留作取舍的记录，下面的 12 步仍然完整说明两条路线的差别 —— 只是其中一条已经是历史。
+			</p>
+		</div>
+	</section>
 
 	<section id="concepts">
 		<span class="label">01 · 先把三个词分开</span>
@@ -423,7 +434,7 @@
 					<div class="s">apps/agent-runtime · service.ts</div>
 				</div>
 				<div class="head">
-					<div class="t">② 路线 A · adapter 快照</div>
+					<div class="t">② 路线 A · adapter 快照 <span style="color:var(--muted);font-weight:400">（已删除）</span></div>
 					<div class="s">chat/localRuntime.tsx · yield 整条消息</div>
 				</div>
 				<div class="head">

@@ -74,29 +74,29 @@ Tailwind v4 tokens, not a chat written from scratch: `ThreadPrimitive`,
 renderer, styled with the same paper-and-ink palette as the rest of the app
 (`src/index.css` holds the tokens for both colour schemes).
 
-The surface reads the runtime through **two interchangeable routes**, switched
-in the top bar and remembered in `localStorage`:
+The surface reads the runtime through **one route: the AI SDK transport**.
+`useChatRuntime` owns the chat through `useChat`, and a single `ChatTransport`
+turns our SSE frames into `UIMessageChunk`s (`text-start` / `text-delta`,
+`reasoning-*`, `tool-input-*` / `tool-output-*`, `finish`). Past that
+translation the message model is the AI SDK's, which is the point: persistence
+adapters, telemetry and resumption all speak it.
 
-| Route | How state flows | Use it when |
-| --- | --- | --- |
-| `assistant-ui adapter` | `useLocalRuntime` + a `ChatModelAdapter` that yields part snapshots | you want the runtime to stay plain assistant-ui; approval prompts ride the adapter's own signals |
-| `AI SDK transport` | `useChatRuntime` + a `ChatTransport` that turns our SSE frames into `UIMessageChunk`s | you want the AI SDK's message model, `useChat` semantics and its ecosystem |
-
-Both speak the same `POST /v1/sessions/:id/turns` SSE stream, so the runtime
-neither knows nor cares which one is mounted. They differ where it matters:
-the adapter route owns the message list and re-yields parts, the transport
-route streams protocol chunks and lets the AI SDK assemble them. Route B is
-code-split — it is a 310 kB chunk (86 kB gzipped) that is only fetched when you
-switch to it, while route A rides the main bundle.
+The seam that makes this honest is that the runtime's frame vocabulary
+(`text`, `thinking`, `tool`, `approval`, `done`) is **ours**, not the SDK's and
+not the AI SDK's — the runtime never learns what renders it. Approval prompts
+are not part of either message protocol, so they travel out of band: an SSE
+frame in, a `POST /v1/sessions/:id/approvals` back.
 
 ```bash
 bun run serve                 # the runtime the UI talks to
-bun run desktop:dev           # then switch routes in the top bar and compare
+bun run desktop:dev           # the window; it talks to that runtime
 ```
 
-[docs/two-routes.html](docs/two-routes.html) walks one turn through both routes
-side by side — each SSE frame next to the snapshot (route A) or the chunks
-(route B) it becomes. Open it in a browser; no server needed.
+[docs/two-routes.html](docs/two-routes.html) is the record of how we decided:
+it walks one turn through each candidate route, frame by frame — the snapshot a
+`ChatModelAdapter` would yield versus the chunks the transport sends. The
+adapter route was removed after that comparison; the page is kept because the
+reasoning is worth keeping. Open it in a browser; no server needed.
 
 ## Install the app
 

@@ -7,12 +7,16 @@ import type { Message } from "../api";
 import { lastUserText, messageOf, type TurnChannel } from "./channel";
 
 /**
- * Route B — the Vercel AI SDK does the talking.
+ * The chat runtime: the AI SDK does the talking.
  *
  * `useChatRuntime` owns the chat through `useChat`; the only glue is a
- * `ChatTransport` that turns vessel's SSE into AI SDK UI message chunks. Once
- * that translation exists, every AI SDK feature (message parts, tool parts,
- * reasoning, resumption) comes along with it.
+ * `ChatTransport` that turns vessel's SSE into AI SDK UI message chunks. That
+ * translation is the whole wire contract — the runtime's frame vocabulary is
+ * ours, the message model past this point is the AI SDK's.
+ *
+ * There used to be a second route (a `ChatModelAdapter` over `useLocalRuntime`)
+ * kept for comparison; see docs/two-routes.html for what the trade-off was and
+ * why this one won.
  */
 export function WireChatProvider(props: {
 	channel: TurnChannel;

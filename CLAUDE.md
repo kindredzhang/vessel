@@ -116,10 +116,11 @@ An open-source coding agent in three projects. Read these before changing them:
 | `apps/desktop` | Go 1.27 + MyGo + React/Vite + Tailwind | the window; builds macOS and iOS from one module |
 
 - Desktop UI is assistant-ui primitives (`src/chat/Thread.tsx`) over Tailwind v4
-tokens (`src/index.css`), not hand-written chat DOM. Two runtime routes exist on
-purpose — `src/chat/localRuntime.tsx` (adapter) and `src/chat/wireRuntime.tsx`
-(AI SDK transport); both consume the same SSE stream, so changes belong in the
-runtime or `src/chat/channel.ts`, not in one route.
+tokens (`src/index.css`), not hand-written chat DOM. One runtime route:
+`src/chat/wireRuntime.tsx` (`useChatRuntime` + a `ChatTransport`). The old
+`ChatModelAdapter` route was deleted on purpose — do not reintroduce a second
+message model; put new behaviour in the runtime's SSE frames or in
+`src/chat/channel.ts`.
 - The `## Frontend` section above (Bun HTML imports, "don't use vite") applies to
 new Bun-served pages, **not** to `apps/desktop`, which builds through MyGo/Vite.
 
