@@ -48,8 +48,16 @@ desktop-ios: ## Run on the iOS simulator (needs Xcode)
 	cd apps/desktop && bun run dev:ios
 
 .PHONY: desktop-build
-desktop-build: ## Package the app for this machine
+desktop-build: ## Package the app for this machine (app + dmg)
 	cd apps/desktop && bun run build
+
+.PHONY: desktop-ipa
+desktop-ipa: ## Build the iOS app (needs Xcode; team/profile for devices)
+	cd apps/desktop && bun run build -- -platform ios
+
+.PHONY: desktop-publish
+desktop-publish: ## Upload the iOS build to TestFlight (paid Apple account)
+	cd apps/desktop && bun run publish -- -platform ios
 
 .PHONY: runtime
 runtime: ## Run the agent runtime CLI

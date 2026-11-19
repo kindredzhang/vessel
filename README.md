@@ -4,6 +4,8 @@ An open-source coding agent you can host yourself: a Go backend, a TypeScript
 agent runtime built on the [Pi coding agent SDK](https://www.npmjs.com/package/@earendil-works/pi-coding-agent),
 and one interface that runs on macOS and iOS.
 
+[![ci](https://github.com/kindredzhang/vessel/actions/workflows/ci.yml/badge.svg)](https://github.com/kindredzhang/vessel/actions/workflows/ci.yml)
+
 > **Status: scaffold.** The three projects run and talk to what they own; the
 > agent is deliberately not wired to the UI yet. See [Roadmap](#roadmap).
 
@@ -60,6 +62,30 @@ cd apps/desktop
 bun run dev:ios               # booted simulator (needs Xcode)
 bun run build:ios             # signed .ipa
 ```
+
+## Install the app
+
+**macOS.** Download the `.dmg` from
+[Releases](https://github.com/kindredzhang/vessel/releases), drag Vessel to
+Applications. Release builds are ad-hoc signed until project maintainers add an
+Apple Developer ID, so the first launch needs right-click → Open (or
+`xattr -dr com.apple.quarantine /Applications/Vessel.app`). Notarized builds —
+no warning at all — come with a paid Apple Developer Program membership; see
+[`docs/releasing.md`](docs/releasing.md).
+
+**iOS.** There are three ways, in increasing order of "other people can use it":
+
+| Path | Needs | How a user installs |
+| --- | --- | --- |
+| Simulator | Xcode | `bun run dev:ios` |
+| Own iPhone | free Apple ID + Xcode | build from Xcode, app expires after 7 days |
+| **TestFlight** | paid Developer Program (99 USD/yr) | TestFlight app + invite or public link, no UDID |
+
+TestFlight is how iOS betas normally ship: Apple hosts the build, testers install
+the free TestFlight app from the App Store, accept the invitation, and get Vessel
+in one tap — nothing to sign, no device registration, builds last 90 days. The
+one-time setup (App ID, App Store Connect API key, `bun run publish -- -platform ios`)
+is written out step by step in [`docs/releasing.md`](docs/releasing.md).
 
 ## Backend
 
@@ -120,6 +146,8 @@ bun run runtime:models              # what the endpoint reports
 | `make test` | Bun tests + `go vet` + Go tests |
 | `make typecheck` | TypeScript projects |
 | `make fmt` | gofmt both Go modules |
+| `make desktop-ipa` | build the iOS app (TestFlight distribution) |
+| `make desktop-publish` | upload the iOS build to TestFlight |
 
 ## Open-source conventions we follow
 

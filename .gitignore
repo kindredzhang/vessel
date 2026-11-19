@@ -38,3 +38,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 .idea
 .vscode
 .DS_Store
+
+# signing material never belongs in the repository
+mygo-update.key
+*.p8
+*.p12
+*.mobileprovision

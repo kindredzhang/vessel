@@ -1,5 +1,9 @@
 import { defineConfig } from "mygo-cli";
 
+// Signing credentials never live in the repository: export them before a
+// release build, or set them as CI secrets (see docs/releasing.md).
+const env = process.env;
+
 export default defineConfig({
   name: "Vessel",
   slug: "vessel",
@@ -17,9 +21,34 @@ export default defineConfig({
   bindings: "src/mygo.ts",
   out: "build",
 
-  // Phones: `bun run dev:ios` needs Xcode (`mygo doctor` says what is missing),
-  // and store builds need a team and a provisioning profile:
-  // ios: { team: "ABCDE12345" },
-  // Signing for distribution on macOS:
-  // macos: { signingIdentity: "Developer ID Application: … (TEAMID)" },
+  // Signed self-updates from GitHub releases (the public key pairs with
+  // mygo-update.key, which stays out of the repository).
+  updates: {
+    publicKey: "u+CP792EYCONGHJ+0W19peAe25KLTKKyrlRZHFefmn4=",
+    github: "kindredzhang/vessel",
+    tagPrefix: "desktop-v",
+    changelog: "CHANGELOG.md",
+  },
+
+  // macOS: an ad-hoc signature without VESSEL_SIGNING_IDENTITY, which runs on
+  // this Mac and warns on anyone else's. Notarization needs a paid Apple
+  // Developer account plus `xcrun notarytool store-credentials vessel`;
+  // set VESSEL_NOTARY_PROFILE to turn it on.
+  macos: {
+    signingIdentity: env.VESSEL_SIGNING_IDENTITY,
+    notarize: env.VESSEL_NOTARY_PROFILE
+      ? { keychainProfile: env.VESSEL_NOTARY_PROFILE }
+      : undefined,
+  },
+
+  // iOS: simulator builds need nothing; device installs need a team (a free
+  // Apple ID works, though the app expires after 7 days); TestFlight needs a
+  // paid membership plus App Store Connect API credentials.
+  ios: {
+    minimumSystemVersion: "17.0",
+    team: env.VESSEL_IOS_TEAM,
+    provisioningProfile: env.VESSEL_IOS_PROFILE,
+    distribution: "app-store",
+    buildNumber: env.VESSEL_BUILD_NUMBER,
+  },
 });

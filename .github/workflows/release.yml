@@ -1,0 +1,112 @@
+name: release
+
+on:
+  push:
+    tags: ["desktop-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Every job is optional-signing: without secrets it still produces a usable
+# ad-hoc signed macOS build, which is what forks and contributors need.
+jobs:
+  macos:
+    name: macOS disk image
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/desktop/go.mod
+      - run: bun install --frozen-lockfile
+
+      # `-upload` writes the installers and the signed update archives to a
+      # draft GitHub release tagged desktop-v<version>.
+      - name: Build and upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VESSEL_SIGNING_IDENTITY: ${{ secrets.VESSEL_SIGNING_IDENTITY }}
+          VESSEL_NOTARY_PROFILE: ${{ secrets.VESSEL_NOTARY_PROFILE }}
+          VESSEL_UPDATER_PRIVATE_KEY: ${{ secrets.VESSEL_UPDATER_PRIVATE_KEY }}
+        run: cd apps/desktop && bun run build -- -upload
+
+      - name: Publish the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(node -p "require('./apps/desktop/package.json').version" 2>/dev/null || echo "")
+          tag="desktop-v${version}"
+          gh release view "$tag" >/dev/null 2>&1 && gh release edit "$tag" --draft=false || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vessel-macos
+          path: apps/desktop/build/*.dmg
+          if-no-files-found: warn
+
+  ios:
+    name: iOS build and TestFlight
+    runs-on: macos-15
+    if: ${{ secrets.VESSEL_IOS_TEAM != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: apps/desktop/go.mod
+      - run: bun install --frozen-lockfile
+
+      - name: Import distribution certificate
+        if: ${{ secrets.VESSEL_IOS_CERT_P12 != '' }}
+        env:
+          CERT: ${{ secrets.VESSEL_IOS_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.VESSEL_IOS_CERT_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/vessel.keychain-db"
+          security create-keychain -p actions "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p actions "$keychain"
+          printf '%s' "$CERT" | base64 -d > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$keychain" -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k actions "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+
+      - name: Install provisioning profile
+        if: ${{ secrets.VESSEL_IOS_PROFILE != '' }}
+        env:
+          PROFILE: ${{ secrets.VESSEL_IOS_PROFILE }}
+        run: |
+          dir="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$dir"
+          printf '%s' "$PROFILE" | base64 -d > "$RUNNER_TEMP/profile.mobileprovision"
+          cp "$RUNNER_TEMP/profile.mobileprovision" "$dir/"
+
+      - name: Build
+        env:
+          VESSEL_IOS_TEAM: ${{ secrets.VESSEL_IOS_TEAM }}
+          VESSEL_BUILD_NUMBER: ${{ github.run_number }}
+          VESSEL_UPDATER_PRIVATE_KEY: ${{ secrets.VESSEL_UPDATER_PRIVATE_KEY }}
+        run: cd apps/desktop && bun run build -- -platform ios
+
+      - name: Upload to TestFlight
+        if: ${{ secrets.MYGO_ASC_KEY_ID != '' }}
+        env:
+          MYGO_ASC_KEY_ID: ${{ secrets.MYGO_ASC_KEY_ID }}
+          MYGO_ASC_ISSUER_ID: ${{ secrets.MYGO_ASC_ISSUER_ID }}
+          MYGO_ASC_KEY: ${{ runner.temp }}/AuthKey.p8
+          ASC_KEY: ${{ secrets.MYGO_ASC_KEY }}
+        run: |
+          printf '%s' "$ASC_KEY" > "$MYGO_ASC_KEY"
+          cd apps/desktop && bun run publish -- -platform ios
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vessel-ios
+          path: apps/desktop/build/**/*.ipa
+          if-no-files-found: warn
