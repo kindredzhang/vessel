@@ -1,0 +1,180 @@
+@import "tailwindcss";
+
+/*
+ * The palette is the same paper-and-ink set the hand-written stylesheet used;
+ * Tailwind owns the utilities now, so the tokens live in the theme layer and
+ * dark mode is one override of those tokens.
+ */
+@theme {
+  --color-paper: #f5f4ef;
+  --color-raised: #fbfaf6;
+  --color-ink: #14171a;
+  --color-ink-soft: #3d4348;
+  --color-muted: #787c78;
+  --color-line: #e0ded4;
+  --color-line-strong: #d2cfc3;
+  --color-accent: #0e7a67;
+  --color-accent-soft: #e4efe9;
+  --color-warn: #a8641b;
+  --color-warn-soft: #f6ecdd;
+  --color-bad: #a83a2c;
+  --color-bad-soft: #f7e5e1;
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", sans-serif;
+  --font-serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+
+  --radius-panel: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-paper: #101211;
+    --color-raised: #15181a;
+    --color-ink: #eceae2;
+    --color-ink-soft: #bfbcb2;
+    --color-muted: #8a8f8a;
+    --color-line: #262924;
+    --color-line-strong: #333731;
+    --color-accent: #58c2a8;
+    --color-accent-soft: #17251f;
+    --color-warn: #d9a05c;
+    --color-warn-soft: #241d12;
+    --color-bad: #e08874;
+    --color-bad-soft: #2a1713;
+  }
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    overscroll-behavior: none;
+  }
+
+  ::selection {
+    background: var(--color-accent-soft);
+  }
+}
+
+@layer components {
+  /* Labels are the product's voice: small, mono, uppercased, spaced. */
+  .label {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-muted);
+  }
+
+  /* Markdown inside assistant messages, styled for reading rather than for chrome. */
+  .prose-vessel {
+    font-family: var(--font-serif);
+    font-size: 15.5px;
+    line-height: 1.72;
+    color: var(--color-ink);
+  }
+
+  .prose-vessel > * + * {
+    margin-top: 0.85em;
+  }
+
+  .prose-vessel p {
+    margin: 0;
+  }
+
+  .prose-vessel h1,
+  .prose-vessel h2,
+  .prose-vessel h3 {
+    font-weight: 600;
+    line-height: 1.3;
+    margin-top: 1.4em;
+  }
+
+  .prose-vessel h1 {
+    font-size: 1.3em;
+  }
+  .prose-vessel h2 {
+    font-size: 1.16em;
+  }
+  .prose-vessel h3 {
+    font-size: 1.04em;
+  }
+
+  .prose-vessel ul,
+  .prose-vessel ol {
+    padding-left: 1.35em;
+    margin: 0;
+  }
+
+  .prose-vessel ul {
+    list-style: disc;
+  }
+  .prose-vessel ol {
+    list-style: decimal;
+  }
+  .prose-vessel li + li {
+    margin-top: 0.3em;
+  }
+
+  .prose-vessel a {
+    color: var(--color-accent);
+    text-underline-offset: 2px;
+    text-decoration: underline;
+  }
+
+  .prose-vessel code {
+    font-family: var(--font-mono);
+    font-size: 0.86em;
+    background: var(--color-accent-soft);
+    border-radius: 4px;
+    padding: 0.1em 0.34em;
+  }
+
+  .prose-vessel pre {
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.6;
+    background: var(--color-raised);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-panel);
+    padding: 12px 14px;
+    overflow-x: auto;
+  }
+
+  .prose-vessel pre code {
+    background: transparent;
+    padding: 0;
+    font-size: inherit;
+  }
+
+  .prose-vessel blockquote {
+    border-left: 2px solid var(--color-line-strong);
+    padding-left: 12px;
+    color: var(--color-ink-soft);
+    font-style: italic;
+  }
+
+  .prose-vessel table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.92em;
+  }
+
+  .prose-vessel th,
+  .prose-vessel td {
+    border: 1px solid var(--color-line);
+    padding: 6px 8px;
+    text-align: left;
+  }
+}

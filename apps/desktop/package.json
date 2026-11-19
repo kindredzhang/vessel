@@ -18,9 +18,18 @@
     "test": "go test ./... && tsc --noEmit"
   },
   "dependencies": {
+    "@assistant-ui/ai-sdk": "^0.0.19",
+    "@assistant-ui/react": "^0.15.37",
+    "@assistant-ui/react-markdown": "^0.14.26",
+    "@tailwindcss/vite": "^4",
+    "ai": "^7.0.177",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.75.0",
     "mygo-runtime": "^0.10.0",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "tailwind-merge": "^3.7.0",
+    "tailwindcss": "^4"
   },
   "devDependencies": {
     "@types/react": "^19.2.0",

@@ -1,8 +1,9 @@
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   server: {
     // The app loads this address during `mygo dev` (devUrl in mygo.config.ts).
     port: 5173,

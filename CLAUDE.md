@@ -113,7 +113,15 @@ An open-source coding agent in three projects. Read these before changing them:
 | --- | --- | --- |
 | `apps/agent-runtime` | Bun + TypeScript, Pi coding agent SDK | the agent: session, tools, model catalog, access modes |
 | `apps/backend` | Go 1.27, chi, pgx, goose, Postgres | persistence and the HTTP API (single-user bearer token) |
-| `apps/desktop` | Go 1.27 + MyGo + React/Vite | the window; builds macOS and iOS from one module |
+| `apps/desktop` | Go 1.27 + MyGo + React/Vite + Tailwind | the window; builds macOS and iOS from one module |
+
+- Desktop UI is assistant-ui primitives (`src/chat/Thread.tsx`) over Tailwind v4
+tokens (`src/index.css`), not hand-written chat DOM. Two runtime routes exist on
+purpose — `src/chat/localRuntime.tsx` (adapter) and `src/chat/wireRuntime.tsx`
+(AI SDK transport); both consume the same SSE stream, so changes belong in the
+runtime or `src/chat/channel.ts`, not in one route.
+- The `## Frontend` section above (Bun HTML imports, "don't use vite") applies to
+new Bun-served pages, **not** to `apps/desktop`, which builds through MyGo/Vite.
 
 - Run: `make help` for every target. Typical loop: `make db`, `make backend`,
   `bun run serve`, `bun run desktop:dev`, `bun run runtime`.

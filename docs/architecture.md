@@ -27,7 +27,8 @@ into another's internals.
 
 **`apps/desktop`** — the window. A MyGo Go module opens a window and binds one
 service (`Runtime.Info`) that reports the version, platform and the backend URL.
-The page inside is React + Vite. MyGo generates the TypeScript client
+The page inside is React + Vite + Tailwind v4, using assistant-ui primitives
+for the thread, composer and message parts. MyGo generates the TypeScript client
 (`src/mygo.ts`) from the Go methods, so the boundary is typed in both
 directions. The same module builds a macOS `.app`/`.dmg` and an iOS `.ipa`; on
 iOS the page renders in WKWebView and the Go code runs as the app.
@@ -46,6 +47,29 @@ extension implements the four access modes. It runs headless (`vessel "prompt"`)
 as a REPL, as a library, or as `vessel serve` — an HTTP + SSE service that the
 window drives. The runtime is the only process that talks to the model, so
 credentials and the access gate stay in one place.
+
+### Two routes into the same thread
+
+The chat surface can drive the runtime two ways, switchable at runtime, because
+the choice is a real trade-off and not a settled one:
+
+- **assistant-ui adapter** — `useLocalRuntime` with a `ChatModelAdapter`. The
+  adapter owns the message list and yields a fresh part snapshot per SSE event,
+  so tool calls, reasoning and text are ordinary assistant-ui parts. Approval
+  requests travel out of band through a small `TurnChannel` object that the
+  adapter also feeds (`approval`, `settled`, `failed`). Least machinery; the
+  message model is assistant-ui's.
+- **AI SDK transport** — `useChatRuntime` with a `ChatTransport` that maps our
+  SSE frames onto `UIMessageChunk`s (`text-start`/`text-delta`/`reasoning-*`/
+  `tool-input-available`/`tool-output-available`). The AI SDK assembles and
+  owns the messages, which is where its ecosystem (persistence adapters,
+  telemetry, resumable streams) plugs in. Costs one dependency and a second
+  message model; it is lazily imported so route A never downloads it.
+
+Neither route knows about access modes: the runtime decides whether a tool call
+needs approval and emits an `approval` frame; the UI renders it, the answer goes
+back to `POST /v1/sessions/:id/approvals`. Keep that seam — anything that makes
+one route smarter than the other means the runtime is leaking UI policy.
 
 ## Why these choices
 
@@ -96,7 +120,10 @@ truthfully-labelled dependencies instead of one fake "connected" indicator.
   window will say `no session <id>` if you click a stale entry — the honest
   failure, not a silent one. Persisting them (or forwarding turns to the backend)
   is the next milestone.
-- The transcript renders model text as pre-wrapped text, not Markdown.
+- Both routes render the same history shape (text, reasoning, tool names and
+  their one-line summaries). Tool *results* are not persisted into the
+  transcript: the runtime keeps names, arguments and status, so a reloaded
+  session shows what was run, not what it printed.
 - Some gateways stream reasoning and then stop without content; the turn is then
   flagged `silent` and the UI says so. `VESSEL_THINKING=off` avoids the budget
   being spent entirely on reasoning.
@@ -108,6 +135,9 @@ truthfully-labelled dependencies instead of one fake "connected" indicator.
   transcripts or repositories leave the machine.
 - Do sessions belong to a workspace path? Today `sessions` has no project or
   repository column; the UI will need one.
+- Which route wins? Both are maintained for now so the difference is felt before
+  it is decided — the adapter route is less code, the transport route buys the
+  AI SDK's message pipeline.
 - Model catalog: the runtime discovers models from the endpoint per process. If
   the backend should show them, it needs either a cached catalog table or a
   proxy endpoint.

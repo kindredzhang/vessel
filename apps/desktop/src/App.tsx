@@ -1,548 +1,423 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactElement } from "react";
+import { Plus, Trash2, Cpu, Radio, Waypoints } from "lucide-react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { Runtime, type Info } from "./mygo";
 import {
-  ACCESS_MODES,
-  MODE_INFO,
-  RuntimeClient,
-  type AccessMode,
-  type Decision,
-  type Message,
-  type SessionView,
-  type TurnEvent,
+	ACCESS_MODES,
+	ApiError,
+	MODE_INFO,
+	type AccessMode,
+	type Decision,
+	type Message,
+	type SessionView,
+	RuntimeClient,
 } from "./api";
+import { TurnChannel, messageOf, type ApprovalRequest } from "./chat/channel";
+import { LocalChatProvider } from "./chat/localRuntime";
+import { VesselThread } from "./chat/Thread";
+import { Runtime, type Info } from "./mygo";
 
-type Status = { state: "checking" } | { state: "ready" } | { state: "offline"; detail: string };
+type RuntimeKind = "adapter" | "wire";
 
-interface ToolRow {
-  key: number;
-  name: string;
-  summary?: string;
-  isError?: boolean;
-}
+// Route B drags the whole AI SDK in with it; keeping it off the first paint
+// makes the cost of each route visible in the bundle as well as the code.
+const WireChatProvider = lazy(async () => {
+	const module = await import("./chat/wireRuntime");
+	return { default: module.WireChatProvider };
+});
 
-interface Approval {
-  requestId: string;
-  description: string;
-  toolName: string;
-  risk: string;
-  mode: AccessMode;
-}
+const RUNTIME_LABEL: Record<RuntimeKind, string> = {
+	adapter: "assistant-ui adapter",
+	wire: "AI SDK transport",
+};
 
-const SUGGESTIONS = [
-  "Explain the layout of this repository",
-  "Run the tests and fix whatever breaks",
-  "Add a Makefile target that prints the running containers",
-];
+const RUNTIME_HINT: Record<RuntimeKind, string> = {
+	adapter: "useLocalRuntime + ChatModelAdapter — our SSE, their runtime",
+	wire: "useChatRuntime + ChatTransport — AI SDK owns the chat",
+};
 
 export function App() {
-  const [info, setInfo] = useState<Info | null>(null);
-  const [status, setStatus] = useState<Status>({ state: "checking" });
-  const [sessions, setSessions] = useState<SessionView[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [mode, setMode] = useState<AccessMode>("ask");
-  const [model, setModel] = useState<string>("");
-  const [draft, setDraft] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [streamText, setStreamText] = useState("");
-  const [tools, setTools] = useState<ToolRow[]>([]);
-  const [approval, setApproval] = useState<Approval | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+	const [info, setInfo] = useState<Info | null>(null);
+	const [client, setClient] = useState<RuntimeClient | null>(null);
+	const [reachable, setReachable] = useState<boolean | null>(null);
 
-  const client = useMemo(() => (info ? new RuntimeClient(info.agentUrl) : null), [info]);
-  const abort = useRef<AbortController | null>(null);
-  const transcript = useRef<HTMLDivElement>(null);
-  const composer = useRef<HTMLTextAreaElement>(null);
-  const activeIdRef = useRef<string | null>(null);
-  activeIdRef.current = activeId;
+	const [sessions, setSessions] = useState<SessionView[]>([]);
+	const [active, setActive] = useState<string | null>(null);
+	const [history, setHistory] = useState<Message[]>([]);
+	const [mountToken, setMountToken] = useState(0);
+	const [mode, setMode] = useState<AccessMode>("ask");
+	const [approval, setApproval] = useState<ApprovalRequest | null>(null);
+	const [notice, setNotice] = useState<string | null>(null);
+	const [kind, setKind] = useState<RuntimeKind>(() => readKind());
 
-  const connect = useCallback(
-    async (runtime: RuntimeClient) => {
-      setStatus({ state: "checking" });
-      try {
-        await runtime.health();
-        const list = await runtime.listSessions();
-        setSessions(list);
-        setStatus({ state: "ready" });
-      } catch (cause) {
-        setStatus({
-          state: "offline",
-          detail: cause instanceof Error ? cause.message : String(cause),
-        });
-      }
-    },
-    [],
-  );
+	const modeRef = useRef<AccessMode>("ask");
+	modeRef.current = mode;
 
-  useEffect(() => {
-    Runtime.info()
-      .then((next) => {
-        setInfo(next);
-        void connect(new RuntimeClient(next.agentUrl));
-      })
-      .catch(() => {
-        // Browser-only development (`bun run dev:web`) has no Go side; fall back
-        // to the local runtime so the same page can be worked on in a tab.
-        const fallback: Info = {
-          app: "vessel",
-          version: "web",
-          os: "web",
-          arch: "",
-          goVersion: "",
-          apiBaseUrl: "http://localhost:8080",
-          agentUrl: import.meta.env.VITE_AGENT_URL ?? "http://127.0.0.1:8787",
-        };
-        setInfo(fallback);
-        void connect(new RuntimeClient(fallback.agentUrl));
-      });
-  }, [connect]);
+	useEffect(() => {
+		let cancelled = false;
+		Runtime.info()
+			.then((next) => {
+				if (!cancelled) setInfo(next);
+			})
+			.catch(() => {
+				if (cancelled) return;
+				setInfo({
+					app: "Vessel",
+					version: "web",
+					os: "web",
+					arch: "",
+					goVersion: "",
+					apiBaseUrl: "http://localhost:8080",
+					agentUrl: import.meta.env.VITE_AGENT_URL ?? "http://127.0.0.1:8787",
+				});
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, []);
 
-  useEffect(() => {
-    const node = transcript.current;
-    if (node) node.scrollTop = node.scrollHeight;
-  }, [messages, streamText, tools, approval]);
+	// The runtime address is the only thing that decides whether we can chat.
+	useEffect(() => {
+		if (!info) return;
+		const next = new RuntimeClient(info.agentUrl);
+		let cancelled = false;
+		next
+			.listSessions()
+			.then((list) => {
+				if (cancelled) return;
+				setClient(next);
+				setReachable(true);
+				setSessions(list);
+			})
+			.catch((error: unknown) => {
+				if (cancelled) return;
+				setClient(next);
+				setReachable(false);
+				setNotice(
+					`The agent runtime at ${info.agentUrl} did not answer (${messageOf(error)}). Start it with \`bun run serve\` in apps/agent-runtime.`,
+				);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [info]);
 
-  const open = useCallback(
-    async (id: string) => {
-      if (!client) return;
-      setActiveId(id);
-      setError(null);
-      setStreamText("");
-      setTools([]);
-      setApproval(null);
-      try {
-        const session = await client.getSession(id);
-        setMessages(session.messages);
-        setMode(session.accessMode);
-        setModel(session.model.name);
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
-      }
-    },
-    [client],
-  );
+	const refreshSessions = useCallback(async (target: RuntimeClient) => {
+		try {
+			const list = await target.listSessions();
+			setSessions(list);
+			setReachable(true);
+		} catch {
+			setReachable(false);
+		}
+	}, []);
 
-  const startSession = useCallback(async (): Promise<SessionView | null> => {
-    if (!client) return null;
-    try {
-      const session = await client.createSession(mode);
-      setSessions((previous) => [session, ...previous]);
-      setActiveId(session.id);
-      setMessages([]);
-      setModel(session.model.name);
-      setError(null);
-      return session;
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-      return null;
-    }
-  }, [client, mode]);
+	const channel = useMemo(() => {
+		if (!client) return null;
+		return new TurnChannel(
+			client,
+			{
+				approval: (request) => setApproval(request),
+				settled: (summary) => {
+					setApproval(null);
+					setMode(summary.accessMode);
+					if (summary.silent) setNotice("The model finished without saying anything. Try a different model or /thinking.");
+					void refreshSessions(client);
+				},
+				failed: (message) => {
+					setApproval(null);
+					setNotice(message);
+				},
+				sessionStarted: (session) => {
+					setActive(session.id);
+					setSessions((current) => [session, ...current.filter((item) => item.id !== session.id)]);
+				},
+			},
+			() => modeRef.current,
+		);
+	}, [client, refreshSessions]);
 
-  const send = useCallback(
-    async (prompt: string) => {
-      const text = prompt.trim();
-      if (!text || !client || busy) return;
-      setError(null);
-      setNotice(null);
-      setDraft("");
+	const openSession = useCallback(
+		async (session: SessionView) => {
+			if (!client || !channel) return;
+			setNotice(null);
+			setApproval(null);
+			channel.attach(session);
+			setActive(session.id);
+			setMode(session.accessMode);
+			// History first: the runtime only reads it when it mounts.
+			try {
+				const full = await client.getSession(session.id);
+				setHistory(full.messages);
+			} catch (error) {
+				setHistory([]);
+				setNotice(`That session is gone (${messageOf(error)}).`);
+				void refreshSessions(client);
+			}
+			setMountToken((token) => token + 1);
+		},
+		[client, channel, refreshSessions],
+	);
 
-      let id = activeIdRef.current;
-      if (!id) {
-        const created = await startSession();
-        if (!created) return;
-        id = created.id;
-      }
+	const newSession = useCallback(() => {
+		channel?.detach();
+		setActive(null);
+		setHistory([]);
+		setApproval(null);
+		setNotice(null);
+		setMountToken((token) => token + 1);
+	}, [channel]);
 
-      setMessages((previous) => [...previous, { role: "user", text, at: new Date().toISOString() }]);
-      setBusy(true);
-      setStreamText("");
-      setTools([]);
-      let assistant = "";
-      const controller = new AbortController();
-      abort.current = controller;
+	const changeMode = useCallback(
+		async (next: AccessMode) => {
+			setMode(next);
+			const id = channel?.id ?? active;
+			if (!client || !id) return;
+			try {
+				const session = await client.setMode(id, next);
+				setMode(session.accessMode);
+				void refreshSessions(client);
+			} catch (error) {
+				setNotice(`Could not switch mode: ${messageOf(error)}`);
+			}
+		},
+		[active, channel, client, refreshSessions],
+	);
 
-      try {
-        for await (const event of client.turn(id, text, controller.signal)) {
-          apply(event);
-        }
-      } catch (cause) {
-        if (!controller.signal.aborted) {
-          setError(cause instanceof Error ? cause.message : String(cause));
-        }
-      } finally {
-        abort.current = null;
-        setBusy(false);
-        setApproval(null);
-      }
+	const decide = useCallback(
+		async (decision: Decision) => {
+			const request = approval;
+			const id = channel?.id ?? active;
+			if (!client || !request || !id) return;
+			setApproval(null);
+			try {
+				await client.decide(id, request.requestId, decision);
+			} catch (error) {
+				setNotice(`Approval did not land: ${messageOf(error)}`);
+			}
+		},
+		[active, approval, channel, client],
+	);
 
-      function apply(event: TurnEvent): void {
-        switch (event.type) {
-          case "text":
-            assistant += event.delta;
-            setStreamText(assistant);
-            break;
-          case "thinking":
-            break;
-          case "tool":
-            if (event.phase === "start") {
-              setTools((previous) => [...previous, { key: previous.length, name: event.name, summary: event.summary }]);
-            } else {
-              setTools((previous) => {
-                const next = [...previous];
-                const last = next[next.length - 1];
-                if (last && last.name === event.name) next[next.length - 1] = { ...last, isError: event.isError };
-                return next;
-              });
-            }
-            break;
-          case "approval":
-            setApproval({
-              requestId: event.requestId,
-              description: event.description,
-              toolName: event.toolName,
-              risk: event.risk,
-              mode: event.mode,
-            });
-            break;
-          case "done":
-            setMessages(event.messages);
-            setMode(event.accessMode);
-            setStreamText("");
-            // Tool rows stay on screen until the next turn: a turn can end with
-            // tool calls and no prose, and clearing them would leave a blank page.
-            if (event.silent) {
-              setNotice(
-                "The model returned no text — its reasoning may have used the whole budget. Try again, or start the runtime with VESSEL_THINKING=off.",
-              );
-            } else if (event.messages.at(-1)?.role !== "assistant") {
-              setNotice("The turn ended without a reply. The tool calls above are what it did.");
-            }
-            break;
-          case "error":
-            setError(event.message);
-            break;
-          case "start":
-            break;
-        }
-      }
-    },
-    [busy, client, startSession],
-  );
+	const removeSession = useCallback(
+		async (session: SessionView) => {
+			if (!client) return;
+			try {
+				await client.deleteSession(session.id);
+			} catch {
+				// deleting something already gone is not worth a banner
+			}
+			if (session.id === active) newSession();
+			void refreshSessions(client);
+		},
+		[active, client, newSession, refreshSessions],
+	);
 
-  const decide = useCallback(
-    async (decision: Decision) => {
-      if (!client || !activeId || !approval) return;
-      try {
-        await client.decide(activeId, approval.requestId, decision);
-        setApproval(null);
-        if (decision === "auto" || decision === "full") setMode(decision);
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
-      }
-    },
-    [activeId, approval, client],
-  );
+	const chat = useMemo(() => {
+		if (!channel) return null;
+		const surface = (
+			<VesselThread footer={<ApprovalCard request={approval} onDecide={decide} />} />
+		);
+		const provider =
+			kind === "adapter" ? (
+				<LocalChatProvider channel={channel} history={history}>
+					{surface}
+				</LocalChatProvider>
+			) : (
+				<Suspense fallback={<p className="label p-7">loading the AI SDK transport…</p>}>
+					<WireChatProvider channel={channel} history={history}>
+						{surface}
+					</WireChatProvider>
+				</Suspense>
+			);
+		return <div key={`${mountToken}:${kind}`}>{provider}</div>;
+	}, [approval, channel, decide, history, kind, mountToken]);
 
-  const changeMode = useCallback(
-    async (next: AccessMode) => {
-      setMode(next);
-      if (!client || !activeId) return;
-      try {
-        const session = await client.setMode(activeId, next);
-        setMode(session.accessMode);
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
-      }
-    },
-    [activeId, client],
-  );
+	const model = active ? sessions.find((item) => item.id === active)?.model : sessions[0]?.model;
 
-  const stop = useCallback(() => {
-    abort.current?.abort();
-  }, []);
-
-  const remove = useCallback(
-    async (id: string) => {
-      if (!client) return;
-      try {
-        await client.deleteSession(id);
-        setSessions((previous) => previous.filter((session) => session.id !== id));
-        if (activeId === id) {
-          setActiveId(null);
-          setMessages([]);
-        }
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
-      }
-    },
-    [activeId, client],
-  );
-
-  const offline = status.state === "offline";
-  const lastAssistant = messages.filter((message) => message.role === "assistant").length;
-
-  return (
-    <div className="app">
-      <aside className="rail">
-        <div className="rail-head">
-          <h1 className="wordmark">
-            vessel <small>{info ? `v${info.version}` : "…"}</small>
-          </h1>
-          <button type="button" className="new-session" onClick={() => void startSession()} disabled={offline}>
-            <span aria-hidden>+</span> New session
-          </button>
-        </div>
-
-        <ul className="threads">
-          {sessions.length === 0 && <li className="threads-empty">No sessions yet</li>}
-          {sessions.map((session) => (
-            <li key={session.id}>
-              <button
-                type="button"
-                data-active={session.id === activeId}
-                onClick={() => void open(session.id)}
-              >
-                <span className="thread-title">
-                  {session.messages.find((message) => message.role === "user")?.text.slice(0, 42) ??
-                    "New session"}
-                </span>
-                <span className="thread-meta">
-                  {MODE_INFO[session.accessMode].label} · {time(session.createdAt)}
-                </span>
-              </button>
-              <button
-                type="button"
-                className="thread-remove"
-                aria-label="Delete session"
-                onClick={() => void remove(session.id)}
-              >
-                ×
-              </button>
-            </li>
-          ))}
-        </ul>
-
-        <div className="rail-foot">
-          <span className="state" data-state={status.state}>
-            <span className="dot" />
-            {status.state === "ready" ? "runtime ready" : status.state === "checking" ? "connecting…" : "runtime offline"}
-          </span>
-          <span className="endpoint">{info?.agentUrl ?? "…"}</span>
-        </div>
-      </aside>
-
-      <main className="main">
-        <header className="topbar">
-          <div className="topbar-model">
-            {model ? `${model}` : "no model loaded"}
-            <span className="topbar-cwd">
-              {info ? (info.arch ? `${info.os}/${info.arch}` : info.os) : ""}
-            </span>
-          </div>
-          <div className="modes" role="group" aria-label="File access mode">
-            {ACCESS_MODES.map((candidate) => (
-              <button
-                key={candidate}
-                type="button"
-                data-active={candidate === mode}
-                title={MODE_INFO[candidate].hint}
-                onClick={() => void changeMode(candidate)}
-                disabled={busy}
-              >
-                {MODE_INFO[candidate].label}
-              </button>
-            ))}
-          </div>
-        </header>
-
-        <div className="transcript" ref={transcript}>
-          {error && (
-            <div className="error" role="alert">
-              <strong>Something went wrong</strong>
-              <span>{error}</span>
-              <button type="button" className="ghost" onClick={() => setError(null)}>
-                Dismiss
-              </button>
-            </div>
-          )}
-          {offline ? (
-            <div className="placeholder">
-              <h2>The agent runtime isn’t answering.</h2>
-              <p className="lede">
-                Vessel talks to the agent over HTTP. Start it in the repo root, then reconnect.
-              </p>
-              <pre className="command">bun run serve</pre>
-              <p className="detail">{status.detail}</p>
-              <button type="button" onClick={() => client && void connect(client)}>
-                Try again
-              </button>
-            </div>
-          ) : messages.length === 0 && !busy ? (
-            <div className="placeholder">
-              <p className="eyebrow">Pi coding agent SDK · {MODE_INFO[mode].label} mode</p>
-              <h2>Ask it to do something.</h2>
-              <p className="lede">
-                It reads, runs commands and edits files in this repository. In {MODE_INFO[mode].label.toLowerCase()} mode,{" "}
-                {MODE_INFO[mode].hint}.
-              </p>
-              <div className="suggestions">
-                {SUGGESTIONS.map((suggestion) => (
-                  <button
-                    key={suggestion}
-                    type="button"
-                    onClick={() => {
-                      setDraft(suggestion);
-                      composer.current?.focus();
-                    }}
-                  >
-                    {suggestion}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="column">
-              {messages.map((message, index) => {
-                // The tool rows of the turn that just finished belong to its reply,
-                // not to a second assistant bubble below it.
-                const withTools = message.role === "assistant" && index === messages.length - 1;
-                return (
-                  <article key={`${message.at}-${index}`} className="turn" data-role={message.role}>
-                    <span className="turn-label">{message.role === "user" ? "you" : "vessel"}</span>
-                    <div className="turn-body">
-                      {withTools && <ToolRows tools={tools} />}
-                      {message.text}
-                    </div>
-                  </article>
-                );
-              })}
-
-              {busy && (
-                <article className="turn" data-role="assistant">
-                  <span className="turn-label">vessel</span>
-                  <div className="turn-body">
-                    <ToolRows tools={tools} />
-                    {streamText && <div className="stream">{streamText}</div>}
-                    {!streamText && tools.length === 0 && (
-                      <div className="working">
-                        <span />
-                        <span />
-                        <span />
-                      </div>
-                    )}
-                  </div>
-                </article>
-              )}
-
-              {notice && (
-                <p className="notice">
-                  {notice}
-                  <button type="button" className="link" onClick={() => setNotice(null)}>
-                    dismiss
-                  </button>
-                </p>
-              )}
-
-              {approval && (
-                <div className="approval" data-risk={approval.risk}>
-                  <div className="approval-head">
-                    <span className="approval-mark">⚠</span>
-                    <div>
-                      <strong>Approval needed</strong>
-                      <span className="approval-meta">
-                        {approval.toolName} · risk {approval.risk} · {MODE_INFO[approval.mode].label} mode
-                      </span>
-                    </div>
-                  </div>
-                  <pre className="approval-call">{approval.description}</pre>
-                  <div className="approval-actions">
-                    <button type="button" className="primary" onClick={() => void decide("allow")}>
-                      Allow once
-                    </button>
-                    <button type="button" onClick={() => void decide("always")}>
-                      Always this session
-                    </button>
-                    <button type="button" onClick={() => void decide("deny")}>
-                      Deny
-                    </button>
-                    <button type="button" className="ghost" onClick={() => void decide("auto")}>
-                      Switch to Auto
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {error && (
-                <div className="error">
-                  <strong>Turn failed</strong>
-                  <span>{error}</span>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        <form
-          className="composer"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void send(draft);
-          }}
-        >
-          <textarea
-            ref={composer}
-            value={draft}
-            rows={1}
-            placeholder={offline ? "runtime offline — start it with bun run serve" : "Ask, or tell it what to change…"}
-            disabled={offline}
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                void send(draft);
-              }
-            }}
-          />
-          {busy ? (
-            <button type="button" className="send stop" onClick={stop} title="Stop the turn">
-              Stop
-            </button>
-          ) : (
-            <button type="submit" className="send" disabled={!draft.trim() || offline}>
-              Send
-            </button>
-          )}
-        </form>
-
-        <footer className="statusline">
-          <span>{lastAssistant} replies</span>
-          <span>{MODE_INFO[mode].hint}</span>
-          <span>read · bash · edit · write · grep · find · ls</span>
-        </footer>
-      </main>
-    </div>
-  );
-}
-
-function ToolRows({ tools }: { tools: ToolRow[] }): ReactElement {
 	return (
-		<>
-			{tools.map((tool) => (
-				<div key={tool.key} className="tool" data-error={tool.isError === true}>
-					<span className="tool-mark">{tool.isError ? "✗" : "⏺"}</span>
-					<span className="tool-name">{tool.name}</span>
-					{tool.summary && <span className="tool-args">{tool.summary}</span>}
+		<div className="flex h-full min-h-0">
+			<aside className="flex w-[15.5rem] shrink-0 flex-col border-r border-line bg-paper">
+				<header className="flex items-baseline justify-between px-4 pb-3 pt-4">
+					<h1 className="font-serif text-[19px] tracking-tight text-ink">vessel</h1>
+					<span className="label">{info ? info.version : "…"}</span>
+				</header>
+
+				<button
+					type="button"
+					onClick={newSession}
+					className="mx-3 mb-3 flex items-center gap-2 rounded-md border border-line bg-raised px-3 py-2 text-left text-[13px] text-ink-soft transition hover:border-line-strong hover:text-ink"
+				>
+					<Plus className="size-3.5" />
+					New session
+				</button>
+
+				<div className="min-h-0 flex-1 overflow-y-auto px-2">
+					<p className="label px-2 pb-1.5 pt-2">sessions</p>
+					{sessions.length === 0 ? (
+						<p className="px-2 py-1 text-[12.5px] leading-relaxed text-muted">No sessions yet.</p>
+					) : (
+						<ul className="flex flex-col">
+							{sessions.map((session) => (
+								<li key={session.id}>
+									<div
+										className={`group flex items-center gap-1 rounded-md pr-1 ${
+											session.id === active ? "bg-accent-soft" : "hover:bg-raised"
+										}`}
+									>
+										<button
+											type="button"
+											onClick={() => void openSession(session)}
+											className="min-w-0 flex-1 px-2 py-1.5 text-left"
+										>
+											<span className="block truncate text-[13px] text-ink">
+												{firstLine(session.messages) || "New conversation"}
+											</span>
+											<span className="label">{clockOf(session.createdAt)}</span>
+										</button>
+										<button
+											type="button"
+											onClick={() => void removeSession(session)}
+											aria-label="Delete session"
+											className="p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:text-bad"
+										>
+											<Trash2 className="size-3.5" />
+										</button>
+									</div>
+								</li>
+							))}
+						</ul>
+					)}
 				</div>
-			))}
-		</>
+
+				<footer className="flex flex-col gap-1.5 border-t border-line px-4 py-3">
+					<span className="label flex items-center gap-1.5">
+						<Radio className={`size-3 ${reachable ? "text-accent" : "text-bad"}`} />
+						{reachable === null ? "connecting" : reachable ? "runtime online" : "runtime offline"}
+					</span>
+					<span className="label flex items-center gap-1.5">
+						<Cpu className="size-3" />
+						{model ? model.name : "no model"}
+					</span>
+					<span className="truncate font-mono text-[10.5px] text-muted">{info?.agentUrl ?? "…"}</span>
+				</footer>
+			</aside>
+
+			<main className="flex min-h-0 min-w-0 flex-1 flex-col">
+				<TopBar mode={mode} onMode={changeMode} kind={kind} onKind={setKind} />
+
+				{notice ? (
+					<div className="flex items-start justify-between gap-4 border-b border-warn/30 bg-warn-soft px-7 py-2.5">
+						<p className="text-[13px] leading-relaxed text-warn">{notice}</p>
+						<button type="button" onClick={() => setNotice(null)} className="label shrink-0 hover:text-ink">
+							dismiss
+						</button>
+					</div>
+				) : null}
+
+				<div className="min-h-0 flex-1">{chat ?? <div className="p-7 label">connecting…</div>}</div>
+			</main>
+		</div>
 	);
 }
 
-function time(iso: string): string {
-  const date = new Date(iso);
-  return Number.isNaN(date.valueOf())
-    ? ""
-    : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+function TopBar(props: {
+	mode: AccessMode;
+	onMode: (mode: AccessMode) => void;
+	kind: RuntimeKind;
+	onKind: (kind: RuntimeKind) => void;
+}) {
+	return (
+		<header className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-line px-7 py-3">
+			<div className="flex items-center gap-1 rounded-md border border-line bg-raised p-0.5">
+				{ACCESS_MODES.map((mode) => (
+					<button
+						key={mode}
+						type="button"
+						onClick={() => props.onMode(mode)}
+						title={MODE_INFO[mode].hint}
+						className={`rounded px-2.5 py-1 text-[12px] transition ${
+							mode === props.mode ? "bg-accent text-paper" : "text-ink-soft hover:text-ink"
+						}`}
+					>
+						{MODE_INFO[mode].label}
+					</button>
+				))}
+			</div>
+
+			<div className="flex items-center gap-1 rounded-md border border-line bg-raised p-0.5" title={RUNTIME_HINT[props.kind]}>
+				<Waypoints className="mx-1.5 size-3 text-muted" />
+				{(Object.keys(RUNTIME_LABEL) as RuntimeKind[]).map((kind) => (
+					<button
+						key={kind}
+						type="button"
+						onClick={() => {
+							writeKind(kind);
+							props.onKind(kind);
+						}}
+						className={`rounded px-2.5 py-1 text-[12px] transition ${
+							kind === props.kind ? "bg-ink text-paper" : "text-ink-soft hover:text-ink"
+						}`}
+					>
+						{RUNTIME_LABEL[kind]}
+					</button>
+				))}
+			</div>
+		</header>
+	);
 }
+
+function ApprovalCard(props: { request: ApprovalRequest | null; onDecide: (decision: Decision) => void }) {
+	const request = props.request;
+	if (!request) return null;
+	return (
+		<div className="rounded-[10px] border border-warn/40 bg-warn-soft px-4 py-3">
+			<div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+				<span className="label text-warn">approval needed</span>
+				<span className="font-mono text-[12.5px] text-ink">
+					{request.toolName} · risk {request.risk} · {MODE_INFO[request.mode].label.toLowerCase()} mode
+				</span>
+			</div>
+			<p className="mt-1.5 break-words font-mono text-[12.5px] leading-relaxed text-ink-soft">
+				{request.description}
+			</p>
+			<div className="mt-3 flex flex-wrap gap-2">
+				<button type="button" onClick={() => props.onDecide("allow")} className="rounded-md bg-accent px-3 py-1.5 text-[12.5px] text-paper">
+					Allow once
+				</button>
+				<button type="button" onClick={() => props.onDecide("always")} className="rounded-md border border-line-strong bg-raised px-3 py-1.5 text-[12.5px] text-ink">
+					Always this session
+				</button>
+				<button type="button" onClick={() => props.onDecide("deny")} className="rounded-md border border-bad/40 bg-raised px-3 py-1.5 text-[12.5px] text-bad">
+					Deny
+				</button>
+				<button type="button" onClick={() => props.onDecide("auto")} className="rounded-md px-3 py-1.5 text-[12.5px] text-ink-soft hover:text-ink">
+					Switch to Auto
+				</button>
+			</div>
+		</div>
+	);
+}
+
+function firstLine(messages: Message[]): string {
+	const first = messages.find((message) => message.role === "user");
+	return (first?.text ?? "").split("\n")[0]?.slice(0, 60) ?? "";
+}
+
+function clockOf(iso: string): string {
+	const date = new Date(iso);
+	if (Number.isNaN(date.getTime())) return "—";
+	return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+const KIND_KEY = "vessel.runtime-kind";
+
+function readKind(): RuntimeKind {
+	const stored = typeof localStorage === "undefined" ? null : localStorage.getItem(KIND_KEY);
+	return stored === "wire" ? "wire" : "adapter";
+}
+
+function writeKind(kind: RuntimeKind): void {
+	if (typeof localStorage !== "undefined") localStorage.setItem(KIND_KEY, kind);
+}
+
+export { ApiError };

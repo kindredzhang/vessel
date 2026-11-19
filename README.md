@@ -66,6 +66,34 @@ bun run dev:ios               # booted simulator (needs Xcode)
 bun run build:ios             # signed .ipa
 ```
 
+### The chat surface
+
+The window is [assistant-ui](https://www.assistant-ui.com) primitives on
+Tailwind v4 tokens, not a chat written from scratch: `ThreadPrimitive`,
+`ComposerPrimitive`, `MessagePrimitive.Parts` and a streaming markdown
+renderer, styled with the same paper-and-ink palette as the rest of the app
+(`src/index.css` holds the tokens for both colour schemes).
+
+The surface reads the runtime through **two interchangeable routes**, switched
+in the top bar and remembered in `localStorage`:
+
+| Route | How state flows | Use it when |
+| --- | --- | --- |
+| `assistant-ui adapter` | `useLocalRuntime` + a `ChatModelAdapter` that yields part snapshots | you want the runtime to stay plain assistant-ui; approval prompts ride the adapter's own signals |
+| `AI SDK transport` | `useChatRuntime` + a `ChatTransport` that turns our SSE frames into `UIMessageChunk`s | you want the AI SDK's message model, `useChat` semantics and its ecosystem |
+
+Both speak the same `POST /v1/sessions/:id/turns` SSE stream, so the runtime
+neither knows nor cares which one is mounted. They differ where it matters:
+the adapter route owns the message list and re-yields parts, the transport
+route streams protocol chunks and lets the AI SDK assemble them. Route B is
+code-split — it is a 310 kB chunk (86 kB gzipped) that is only fetched when you
+switch to it, while route A rides the main bundle.
+
+```bash
+bun run serve                 # the runtime the UI talks to
+bun run desktop:dev           # then switch routes in the top bar and compare
+```
+
 ## Install the app
 
 **macOS.** Download the `.dmg` from
@@ -169,7 +197,8 @@ bun run runtime:models              # what the endpoint reports
 1. ~~Access modes, model catalog, CLI~~ — done in `apps/agent-runtime`.
 2. ~~Monorepo, backend API, MyGo shell~~ — this scaffold.
 3. ~~Chat surface in the desktop app, with the four access-mode controls~~ —
-   the window streams turns from `bun run serve`.
+   the window streams turns from `bun run serve`, through either an
+   assistant-ui adapter or an AI SDK transport.
 4. Persist runtime sessions (they live in memory today) and let the runtime post
    turns to the backend for history and multi-device access.
 5. Hard bash sandbox (`BashOperations`) so modes are a fence, not a guardrail.
